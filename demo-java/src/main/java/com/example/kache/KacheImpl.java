@@ -14,6 +14,7 @@ import java.util.function.Function;
 public class KacheImpl<T> extends Kache<T> {
     private final Class<T> clazz;
     private final Cache<String, T> caffeineCache;
+    private final Duration remoteCacheExpiry;
     private final StringRedisTemplate stringRedisTemplate;
     private final Function<String, T> upstreamDataLoader;
     private final KacheSynchronizer kacheSynchronizer;
@@ -25,18 +26,18 @@ public class KacheImpl<T> extends Kache<T> {
             final String identifier,
             final Class<T> clazz,
             final Cache<String, T> caffeineCache,
+            final Duration remoteCacheExpiry,
             final StringRedisTemplate stringRedisTemplate,
             final Function<String, T> upstreamDataLoader,
             final KacheSynchronizer kacheSynchronizer) {
         super(identifier);
         this.clazz = clazz;
         this.caffeineCache = caffeineCache;
+        this.remoteCacheExpiry = remoteCacheExpiry;
         this.stringRedisTemplate = stringRedisTemplate;
         this.upstreamDataLoader = upstreamDataLoader;
         this.kacheSynchronizer = kacheSynchronizer;
     }
-
-    // TODO: configure local and remote ttl
 
     // TODO: implement retry when redis lock not acquired
     @Override
@@ -80,7 +81,7 @@ public class KacheImpl<T> extends Kache<T> {
 
                 try {
                     final String serialized = objectMapper.writeValueAsString(upstreamValue);
-                    stringRedisTemplate.opsForValue().set(kacheKey, serialized);
+                    stringRedisTemplate.opsForValue().set(kacheKey, serialized, remoteCacheExpiry);
                 } catch (Exception e) {
                     log.error("Failed to write back to Redis cache for key: {}", kacheKey, e);
                 }
@@ -118,7 +119,7 @@ public class KacheImpl<T> extends Kache<T> {
         }
 
         try {
-            stringRedisTemplate.opsForValue().set(kacheKey, serialized);
+            stringRedisTemplate.opsForValue().set(kacheKey, serialized, remoteCacheExpiry);
         } catch (Exception e) {
             log.error("Failed to write data to Redis cache for key: {}", kacheKey, e);
             throw new IOException("Failed to write data to Redis cache for key: " + kacheKey, e);

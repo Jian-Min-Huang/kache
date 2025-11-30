@@ -41,15 +41,16 @@ public class MemberConfig {
     @Bean
     public Kache<MemberData> memberKache(
             final StringRedisTemplate stringRedisTemplate,
-            final Function<String, MemberData> memberUpstreamDataLoader,
+            final MemberRepository memberRepository,
             final KacheSynchronizer kacheSynchronizer) {
         final String identifier = "MemberData";
         final Kache<MemberData> kache = new KacheImpl<>(
                 identifier,
                 MemberData.class,
                 memberLocalCache(),
+                Duration.ofMinutes(10),
                 stringRedisTemplate,
-                memberUpstreamDataLoader,
+                memberUpstreamDataLoader(memberRepository),
                 kacheSynchronizer);
         kacheSynchronizer.registerKache(identifier, kache);
         return kache;

@@ -67,6 +67,7 @@ class KacheImplTests {
         "TestData",
         TestData.class,
         caffeineCache,
+        Duration.ofMinutes(10),
         redisTemplate,
         upstream,
         kacheSynchronizer);
