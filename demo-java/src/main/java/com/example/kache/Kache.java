@@ -11,7 +11,15 @@ public abstract class Kache<T> {
         this.identifier = identifier;
     }
 
+    protected String buildKacheKey(final String key) {
+        return "KACHE:%s:%s".formatted(identifier, key);
+    }
+
     public abstract Optional<T> getIfPresent(final String key);
+
+    public T getOrDefault(final String key, final T defaultValue) {
+        return getIfPresent(key).orElse(defaultValue);
+    }
 
     public abstract void put(final String key, final T data) throws IOException;
 
@@ -20,12 +28,4 @@ public abstract class Kache<T> {
     public abstract void invalidateAllCache(final String key) throws IOException;
 
     public abstract void refresh(final String key) throws IOException;
-
-    protected String buildKacheKey(final String key) {
-        return "KACHE:%s:%s".formatted(identifier, key);
-    }
-
-    public T getOrDefault(final String key, final T defaultValue) {
-        return getIfPresent(key).orElse(defaultValue);
-    }
 }

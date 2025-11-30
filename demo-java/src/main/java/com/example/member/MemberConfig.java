@@ -10,10 +10,12 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
 import java.time.Duration;
 import java.util.function.Function;
 
+@EnableScheduling
 @Configuration
 public class MemberConfig {
     @Bean
