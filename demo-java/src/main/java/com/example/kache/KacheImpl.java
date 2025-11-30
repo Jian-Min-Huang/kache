@@ -2,7 +2,7 @@ package com.example.kache;
 
 import java.time.Duration;
 import java.util.Optional;
-import java.util.function.Supplier;
+import java.util.function.Function;
 
 import org.springframework.data.redis.core.StringRedisTemplate;
 
@@ -16,7 +16,7 @@ public class KacheImpl<T> extends Kache<T> {
   private final Class<T> clazz;
   private final Cache<String, T> caffeineCache;
   private final StringRedisTemplate stringRedisTemplate;
-  private final Supplier<T> upstreamDataLoader;
+  private final Function<String, T> upstreamDataLoader;
   private final KacheSynchronizer kacheSynchronizer;
 
   private final ObjectMapper objectMapper = new ObjectMapper();
@@ -27,7 +27,7 @@ public class KacheImpl<T> extends Kache<T> {
       final Class<T> clazz,
       final Cache<String, T> caffeineCache,
       final StringRedisTemplate stringRedisTemplate,
-      final Supplier<T> upstreamDataLoader,
+      final Function<String, T> upstreamDataLoader,
       final KacheSynchronizer kacheSynchronizer) {
     super(identifier);
     this.clazz = clazz;
@@ -71,7 +71,7 @@ public class KacheImpl<T> extends Kache<T> {
 
     if (Boolean.TRUE.equals(locked)) {
       try {
-        final T upstreamValue = upstreamDataLoader.get();
+        final T upstreamValue = upstreamDataLoader.apply(key);
         if (upstreamValue == null) {
           return Optional.empty();
         }
@@ -124,5 +124,9 @@ public class KacheImpl<T> extends Kache<T> {
 
   @Override
   public void refresh(final String key) {
+    final T upstreamValue = upstreamDataLoader.apply(key);
+    if (upstreamValue != null) {
+      put(key, upstreamValue);
+    }
   }
 }
