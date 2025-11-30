@@ -24,10 +24,6 @@ public abstract class Kache<T> {
     //       如果沒拿到鎖，回傳空
     public abstract Optional<T> getIfPresent(final String key);
 
-    public T getOrDefault(final String key, final T defaultValue) {
-        return getIfPresent(key).orElse(defaultValue);
-    }
-
     // 刷 Redis，通知清除本地缓存
     public abstract void put(final String key, final T data) throws IOException;
 
