@@ -5,25 +5,27 @@ import java.util.Optional;
 
 public abstract class Kache<T> {
 
-  protected final String identifier;
+    protected final String identifier;
 
-  protected Kache(final String identifier) {
-    this.identifier = identifier;
-  }
+    protected Kache(final String identifier) {
+        this.identifier = identifier;
+    }
 
-  public abstract Optional<T> getIfPresent(final String key);
+    public abstract Optional<T> getIfPresent(final String key);
 
-  public abstract void put(final String key, final T data) throws IOException;
+    public abstract void put(final String key, final T data) throws IOException;
 
-  public abstract void invalidateLocalCache(final String kacheKey);
+    public abstract void invalidateLocalCache(final String kacheKey);
 
-  public abstract void refresh(final String key) throws IOException;
+    public abstract void invalidateAllCache(final String key) throws IOException;
 
-  protected String buildKacheKey(final String key) {
-    return "KACHE:%s:%s".formatted(identifier, key);
-  }
+    public abstract void refresh(final String key) throws IOException;
 
-  public T getOrDefault(final String key, final T defaultValue) {
-    return getIfPresent(key).orElse(defaultValue);
-  }
+    protected String buildKacheKey(final String key) {
+        return "KACHE:%s:%s".formatted(identifier, key);
+    }
+
+    public T getOrDefault(final String key, final T defaultValue) {
+        return getIfPresent(key).orElse(defaultValue);
+    }
 }
