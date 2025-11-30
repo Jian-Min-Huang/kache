@@ -1,5 +1,6 @@
 package com.example.kache;
 
+import java.io.IOException;
 import java.util.Optional;
 
 public abstract class Kache<T> {
@@ -12,7 +13,7 @@ public abstract class Kache<T> {
 
   public abstract Optional<T> getIfPresent(final String key);
 
-  public abstract void put(final String key, final T data);
+  public abstract void put(final String key, final T data) throws IOException;
 
   public abstract void invalidateLocalCache(final String kacheKey);
 

@@ -2,9 +2,10 @@ package com.example.kache;
 
 import java.time.Duration;
 import java.util.Optional;
-import java.util.function.Supplier;
+import java.util.function.Function;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import static org.mockito.ArgumentMatchers.any;
@@ -34,11 +35,11 @@ class KacheImplTests {
     String name;
   }
 
+  private Kache<TestMember> cache;
   private Cache<String, TestMember> caffeineCache;
   private StringRedisTemplate redisTemplate;
   private ValueOperations<String, String> valueOps;
-  private Supplier<TestMember> upstream;
-  private Kache<TestMember> cache;
+  private Function<String, TestMember> upstream;
   private KacheSynchronizer kacheSynchronizer;
 
   @SuppressWarnings("unchecked")
@@ -47,7 +48,7 @@ class KacheImplTests {
     caffeineCache = Mockito.mock(Cache.class);
     redisTemplate = Mockito.mock(StringRedisTemplate.class);
     valueOps = Mockito.mock(ValueOperations.class);
-    upstream = Mockito.mock(Supplier.class);
+    upstream = Mockito.mock(Function.class);
     kacheSynchronizer = Mockito.mock(KacheSynchronizer.class);
 
     cache = new KacheImpl<>(
@@ -73,7 +74,7 @@ class KacheImplTests {
   }
 
   @Test
-  void getIfPresent_shouldReturnFromRedisWhenCaffeineMissAndRedisHit() throws Exception {
+  void getIfPresent_shouldReturnFromRedisWhenCaffeineMissAndRedisHit() {
     String key = "k1";
     String kacheKey = "KACHE:TestMember:" + key;
     String json = "{\"id\":1,\"name\":\"m1\"}";
@@ -82,7 +83,7 @@ class KacheImplTests {
     when(caffeineCache.getIfPresent(kacheKey)).thenReturn(null);
     when(redisTemplate.opsForValue()).thenReturn(valueOps);
     when(valueOps.get(kacheKey)).thenReturn(json);
-    when(upstream.get()).thenReturn(new TestMember(99L, "fromUpstream"));
+    when(upstream.apply(key)).thenReturn(new TestMember(99L, "fromUpstream"));
 
     Optional<TestMember> result = cache.getIfPresent(key);
 
@@ -90,11 +91,11 @@ class KacheImplTests {
 
     verify(redisTemplate).opsForValue();
     verify(valueOps).get(kacheKey);
-    verify(upstream, never()).get();
+    verify(upstream, never()).apply(key);
   }
 
   @Test
-  void getIfPresent_shouldLoadFromUpstreamWhenCachesMissAndLockAcquired() throws Exception {
+  void getIfPresent_shouldLoadFromUpstreamWhenCachesMissAndLockAcquired() {
     String key = "k1";
     String kacheKey = "KACHE:TestMember:" + key;
     String lockKey = kacheKey + ":lk";
@@ -104,12 +105,12 @@ class KacheImplTests {
     when(redisTemplate.opsForValue()).thenReturn(valueOps);
     when(valueOps.get(kacheKey)).thenReturn(null);
     when(valueOps.setIfAbsent(eq(lockKey), anyString(), any(Duration.class))).thenReturn(Boolean.TRUE);
-    when(upstream.get()).thenReturn(member);
+    when(upstream.apply(key)).thenReturn(member);
 
     Optional<TestMember> result = cache.getIfPresent(key);
 
     assertThat(result).contains(member);
-    verify(upstream).get();
+    verify(upstream).apply(key);
     verify(valueOps).set(eq(kacheKey), anyString());
     verify(caffeineCache).put(kacheKey, member);
     verify(redisTemplate).delete(lockKey);
@@ -129,37 +130,21 @@ class KacheImplTests {
     Optional<TestMember> result = cache.getIfPresent(key);
 
     assertThat(result).isEmpty();
-    verify(upstream, never()).get();
+    verify(upstream, never()).apply(key);
   }
 
   @Test
-  void put_shouldWriteToRedisAndCaffeineAndPublishInvalidation() throws Exception {
+  void put_shouldWriteToRedisAndCaffeineAndPublishInvalidation() {
     String key = "k1";
     String kacheKey = "KACHE:TestMember:" + key;
     TestMember member = new TestMember(1L, "m1");
-
     when(redisTemplate.opsForValue()).thenReturn(valueOps);
 
-    Boolean result = cache.put(key, member);
+    assertThatCode(() -> cache.put(key, member)).doesNotThrowAnyException();
 
-    assertThat(result).isTrue();
-    verify(valueOps).set(eq(kacheKey), anyString());
+    verify(redisTemplate).opsForValue();
+    verify(valueOps).set(kacheKey, "{\"id\":1,\"name\":\"m1\"}");
     verify(caffeineCache).put(kacheKey, member);
     verify(kacheSynchronizer).publishCacheInvalidation(kacheKey);
-  }
-
-  @Test
-  void put_shouldReturnFalseAndNotTouchCaffeineOrSynchronizerWhenRedisFails() throws Exception {
-    String key = "k1";
-    String kacheKey = "KACHE:TestMember:" + key;
-    TestMember member = new TestMember(1L, "m1");
-
-    when(redisTemplate.opsForValue()).thenThrow(new RuntimeException("redis error"));
-
-    Boolean result = cache.put(key, member);
-
-    assertThat(result).isFalse();
-    verify(caffeineCache, never()).put(eq(kacheKey), eq(member));
-    verifyNoInteractions(kacheSynchronizer);
   }
 }

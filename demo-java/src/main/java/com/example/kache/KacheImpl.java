@@ -1,5 +1,6 @@
 package com.example.kache;
 
+import java.io.IOException;
 import java.time.Duration;
 import java.util.Optional;
 import java.util.function.Function;
@@ -101,15 +102,25 @@ public class KacheImpl<T> extends Kache<T> {
     }
   }
 
+  // TODO: implement compensate when objectMapper writeValueAsString or redis set
+  // fails
   @Override
-  public void put(final String key, final T data) {
+  public void put(final String key, final T data) throws IOException {
     final String kacheKey = buildKacheKey(key);
 
+    final String serialized;
     try {
-      final String serialized = objectMapper.writeValueAsString(data);
+      serialized = objectMapper.writeValueAsString(data);
+    } catch (Exception e) {
+      log.error("Failed to serialize data for key: {}", kacheKey, e);
+      throw new IOException("Failed to serialize cache payload for key: " + kacheKey, e);
+    }
+
+    try {
       stringRedisTemplate.opsForValue().set(kacheKey, serialized);
     } catch (Exception e) {
       log.error("Failed to write data to Redis cache for key: {}", kacheKey, e);
+      throw new IOException("Failed to write data to Redis cache for key: " + kacheKey, e);
     }
 
     caffeineCache.put(kacheKey, data);
@@ -126,7 +137,11 @@ public class KacheImpl<T> extends Kache<T> {
   public void refresh(final String key) {
     final T upstreamValue = upstreamDataLoader.apply(key);
     if (upstreamValue != null) {
-      put(key, upstreamValue);
+      try {
+        put(key, upstreamValue);
+      } catch (IOException e) {
+        log.error("Failed to refresh cache for key: {}", key, e);
+      }
     }
   }
 }
