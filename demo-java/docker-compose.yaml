@@ -1,0 +1,29 @@
+version: "3.8"
+
+services:
+  redis:
+    image: redis:6
+    command: ["redis-server", "--requirepass", "rootroot"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./redis_data:/data
+
+  postgresql:
+    image: postgres:17
+    environment:
+      POSTGRES_PASSWORD: rootroot
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./postgres_data:/var/lib/postgresql/data
+
+  mongo:
+    image: mongo:8
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: rootroot
+    ports:
+      - "27017:27017"
+    volumes:
+      - ./mongo_data:/data/db
