@@ -1,6 +1,5 @@
 package com.example.kache;
 
-import com.example.member.MemberData;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
