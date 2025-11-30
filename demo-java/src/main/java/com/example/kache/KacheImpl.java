@@ -1,7 +1,9 @@
 package com.example.kache;
 
+import com.example.member.MemberData;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
@@ -23,20 +25,28 @@ public class KacheImpl<T> extends Kache<T> {
     private static final Duration LOCK_TTL = Duration.ofSeconds(5);
 
     public KacheImpl(
-            final String identifier,
             final Class<T> clazz,
-            final Cache<String, T> caffeineCache,
+            final Duration localCacheExpiry,
+            final Long maximumSize,
             final Duration remoteCacheExpiry,
             final StringRedisTemplate stringRedisTemplate,
             final Function<String, T> upstreamDataLoader,
             final KacheSynchronizer kacheSynchronizer) {
-        super(identifier);
+        super(clazz.getSimpleName());
+
         this.clazz = clazz;
-        this.caffeineCache = caffeineCache;
+        this.caffeineCache = Caffeine
+                .newBuilder()
+                .expireAfterWrite(localCacheExpiry)
+                .maximumSize(maximumSize)
+                .recordStats()
+                .build();
         this.remoteCacheExpiry = remoteCacheExpiry;
         this.stringRedisTemplate = stringRedisTemplate;
         this.upstreamDataLoader = upstreamDataLoader;
         this.kacheSynchronizer = kacheSynchronizer;
+
+        kacheSynchronizer.registerKache(clazz.getTypeName(), this);
     }
 
     // TODO: implement retry when redis lock not acquired
