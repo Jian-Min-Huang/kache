@@ -12,9 +12,11 @@ public abstract class Kache<T> {
 
   public abstract Optional<T> getIfPresent(final String key);
 
-  public abstract Boolean put(final String key, final T data);
+  public abstract void put(final String key, final T data);
 
   public abstract void invalidateLocalCache(final String kacheKey);
+
+  public abstract void refresh(final String key);
 
   protected String buildKacheKey(final String key) {
     return "KACHE:%s:%s".formatted(identifier, key);

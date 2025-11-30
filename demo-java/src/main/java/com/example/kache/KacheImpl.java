@@ -102,7 +102,7 @@ public class KacheImpl<T> extends Kache<T> {
   }
 
   @Override
-  public Boolean put(final String key, final T data) {
+  public void put(final String key, final T data) {
     final String kacheKey = buildKacheKey(key);
 
     try {
@@ -110,18 +110,19 @@ public class KacheImpl<T> extends Kache<T> {
       stringRedisTemplate.opsForValue().set(kacheKey, serialized);
     } catch (Exception e) {
       log.error("Failed to write data to Redis cache for key: {}", kacheKey, e);
-      return Boolean.FALSE;
     }
 
     caffeineCache.put(kacheKey, data);
 
     kacheSynchronizer.publishCacheInvalidation(kacheKey);
-
-    return Boolean.TRUE;
   }
 
   @Override
   public void invalidateLocalCache(final String kacheKey) {
     caffeineCache.invalidate(kacheKey);
+  }
+
+  @Override
+  public void refresh(final String key) {
   }
 }
