@@ -1,9 +1,9 @@
 package com.example.kache;
 
 public interface KacheSynchronizer {
-    void publishCacheInvalidation(final String kacheKey);
+    void invalidateAllLocalCache(final String kacheKey);
 
-    void handleCacheInvalidation(final String cacheKey);
+    void invalidateLocalCache(final String kacheKey);
 
     <T> void registerKache(final String identifier, final Kache<T> kache);
 }

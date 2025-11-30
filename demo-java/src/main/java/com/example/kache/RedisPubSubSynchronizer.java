@@ -34,7 +34,7 @@ public class RedisPubSubSynchronizer implements KacheSynchronizer {
         listenerContainer.addMessageListener(
                 (message, pattern) -> {
                     final String kacheKey = new String(message.getBody(), StandardCharsets.UTF_8);
-                    handleCacheInvalidation(kacheKey);
+                    invalidateLocalCache(kacheKey);
                 },
                 new ChannelTopic(INVALIDATION_CHANNEL));
         listenerContainer.afterPropertiesSet();
@@ -49,12 +49,12 @@ public class RedisPubSubSynchronizer implements KacheSynchronizer {
     }
 
     @Override
-    public void publishCacheInvalidation(final String kacheKey) {
+    public void invalidateAllLocalCache(final String kacheKey) {
         stringRedisTemplate.convertAndSend(INVALIDATION_CHANNEL, kacheKey);
     }
 
     @Override
-    public void handleCacheInvalidation(final String kacheKey) {
+    public void invalidateLocalCache(final String kacheKey) {
         final String identifier = kacheKey.split(":", 3)[1];
         registeredKaches
                 .forEach((registeredIdentifier, kache) -> {

@@ -193,6 +193,6 @@ class KacheImplTests {
 
     verify(redisTemplate).opsForValue();
     verify(valueOps).set(kacheKey, "{\"id\":1,\"name\":\"name1\"}");
-    verify(kacheSynchronizer).publishCacheInvalidation(kacheKey);
+    verify(kacheSynchronizer).invalidateAllLocalCache(kacheKey);
   }
 }

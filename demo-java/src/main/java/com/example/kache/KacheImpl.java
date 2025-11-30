@@ -36,6 +36,9 @@ public class KacheImpl<T> extends Kache<T> {
         this.kacheSynchronizer = kacheSynchronizer;
     }
 
+    // TODO: configure local and remote ttl
+
+    // TODO: implement retry when redis lock not acquired
     @Override
     public Optional<T> getIfPresent(final String key) {
         final String kacheKey = buildKacheKey(key);
@@ -121,7 +124,7 @@ public class KacheImpl<T> extends Kache<T> {
             throw new IOException("Failed to write data to Redis cache for key: " + kacheKey, e);
         }
 
-        kacheSynchronizer.publishCacheInvalidation(kacheKey);
+        kacheSynchronizer.invalidateAllLocalCache(kacheKey);
     }
 
     @Override
@@ -141,7 +144,7 @@ public class KacheImpl<T> extends Kache<T> {
             throw new IOException("Failed to delete Redis cache for key: " + kacheKey, e);
         }
 
-        kacheSynchronizer.publishCacheInvalidation(kacheKey);
+        kacheSynchronizer.invalidateAllLocalCache(kacheKey);
     }
 
     @Override
