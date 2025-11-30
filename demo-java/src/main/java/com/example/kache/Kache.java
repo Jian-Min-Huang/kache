@@ -14,6 +14,8 @@ public abstract class Kache<T> {
 
   public abstract Boolean put(final String key, final T data);
 
+  public abstract void invalidateLocalCache(final String kacheKey);
+
   protected String buildKacheKey(final String key) {
     return "KACHE:%s:%s".formatted(identifier, key);
   }

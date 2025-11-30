@@ -13,14 +13,13 @@ import lombok.extern.slf4j.Slf4j;
 
 @Slf4j
 public class KacheImpl<T> extends Kache<T> {
-  private final ObjectMapper objectMapper = new ObjectMapper();
-
   private final Class<T> clazz;
   private final Cache<String, T> caffeineCache;
   private final StringRedisTemplate stringRedisTemplate;
   private final Supplier<T> upstreamDataLoader;
   private final KacheSynchronizer kacheSynchronizer;
 
+  private final ObjectMapper objectMapper = new ObjectMapper();
   private static final Duration LOCK_TTL = Duration.ofSeconds(5);
 
   public KacheImpl(
@@ -119,5 +118,10 @@ public class KacheImpl<T> extends Kache<T> {
     kacheSynchronizer.publishCacheInvalidation(kacheKey);
 
     return Boolean.TRUE;
+  }
+
+  @Override
+  public void invalidateLocalCache(final String kacheKey) {
+    caffeineCache.invalidate(kacheKey);
   }
 }
