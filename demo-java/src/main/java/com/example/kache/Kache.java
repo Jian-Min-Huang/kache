@@ -17,7 +17,7 @@ public abstract class Kache<T> {
 
   public abstract void invalidateLocalCache(final String kacheKey);
 
-  public abstract void refresh(final String key);
+  public abstract void refresh(final String key) throws IOException;
 
   protected String buildKacheKey(final String key) {
     return "KACHE:%s:%s".formatted(identifier, key);

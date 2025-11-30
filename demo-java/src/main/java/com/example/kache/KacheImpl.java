@@ -103,7 +103,6 @@ public class KacheImpl<T> extends Kache<T> {
   }
 
   // TODO: implement compensate when objectMapper writeValueAsString or redis set
-  // fails
   @Override
   public void put(final String key, final T data) throws IOException {
     final String kacheKey = buildKacheKey(key);
@@ -134,14 +133,10 @@ public class KacheImpl<T> extends Kache<T> {
   }
 
   @Override
-  public void refresh(final String key) {
+  public void refresh(final String key) throws IOException {
     final T upstreamValue = upstreamDataLoader.apply(key);
     if (upstreamValue != null) {
-      try {
-        put(key, upstreamValue);
-      } catch (IOException e) {
-        log.error("Failed to refresh cache for key: {}", key, e);
-      }
+      put(key, upstreamValue);
     }
   }
 }

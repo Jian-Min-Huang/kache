@@ -1,17 +1,21 @@
 package com.example.kache;
 
+import java.io.IOException;
+import java.lang.reflect.Field;
 import java.time.Duration;
 import java.util.Optional;
 import java.util.function.Function;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import org.mockito.Mockito;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -19,6 +23,8 @@ import static org.mockito.Mockito.when;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.benmanes.caffeine.cache.Cache;
 
 import lombok.AllArgsConstructor;
@@ -41,6 +47,12 @@ class KacheImplTests {
   private ValueOperations<String, String> valueOps;
   private Function<String, TestMember> upstream;
   private KacheSynchronizer kacheSynchronizer;
+
+  private static class TestJsonException extends JsonProcessingException {
+    TestJsonException(final String msg) {
+      super(msg);
+    }
+  }
 
   @SuppressWarnings("unchecked")
   @BeforeEach
@@ -131,6 +143,43 @@ class KacheImplTests {
 
     assertThat(result).isEmpty();
     verify(upstream, never()).apply(key);
+  }
+
+  @Test
+  void put_shouldPropagateIOExceptionWhenSerializationFails() throws Exception {
+    String key = "k1";
+    TestMember member = new TestMember(1L, "m1");
+    ObjectMapper mapper = Mockito.mock(ObjectMapper.class);
+    when(mapper.writeValueAsString(member)).thenThrow(new TestJsonException("boom"));
+
+    Field objectMapperField = KacheImpl.class.getDeclaredField("objectMapper");
+    objectMapperField.setAccessible(true);
+    objectMapperField.set(cache, mapper);
+
+    assertThatThrownBy(() -> cache.put(key, member))
+        .isInstanceOf(IOException.class)
+        .hasMessageContaining("Failed to serialize cache payload");
+
+    verifyNoInteractions(redisTemplate, valueOps, caffeineCache, kacheSynchronizer);
+  }
+
+  @Test
+  void put_shouldPropagateExceptionWhenRedisWriteFails() {
+    String key = "k1";
+    String kacheKey = "KACHE:TestMember:" + key;
+    TestMember member = new TestMember(1L, "m1");
+    RuntimeException failure = new RuntimeException("redis down");
+
+    when(redisTemplate.opsForValue()).thenReturn(valueOps);
+    doThrow(failure).when(valueOps).set(kacheKey, "{\"id\":1,\"name\":\"m1\"}");
+
+    assertThatThrownBy(() -> cache.put(key, member))
+            .isInstanceOf(IOException.class)
+            .hasMessageContaining("Failed to write data to Redis cache for key");
+
+    verify(redisTemplate).opsForValue();
+    verify(valueOps).set(kacheKey, "{\"id\":1,\"name\":\"m1\"}");
+    verifyNoInteractions(caffeineCache, kacheSynchronizer);
   }
 
   @Test
