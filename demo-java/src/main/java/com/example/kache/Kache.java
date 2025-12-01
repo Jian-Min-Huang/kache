@@ -20,19 +20,19 @@ public abstract class Kache<T> {
     //   如果沒有，再查 Redis
     //     如果有，寫本地快取，然後回傳
     //     如果沒有，再拿分布式鎖
-    //       如果拿到鎖，去上游撈資料，寫 Redis，寫本地快取，然後回傳
+    //       如果拿到鎖，去上游拿資料，更新  Redis，通知所有節點清除 Caffeine，然後回傳
     //       如果沒拿到鎖，回傳空
     public abstract Optional<T> getIfPresent(final String key);
 
-    // 刷 Redis，通知清除本地缓存
+    // 更新 Redis，通知所有節點清除 Caffeine
     public abstract void put(final String key, final T data) throws IOException;
 
-    // 收到通知，清除本地缓存
+    // 收到通知，清除 Caffeine
     public abstract void invalidateLocalCache(final String kacheKey);
 
-    // 刪 Redis，通知清除本地缓存
+    // 刪除 Redis，通知所有節點清除 Caffeine
     public abstract void invalidateAllCache(final String key) throws IOException;
 
-    // 找一群 key，刷上游，刷 Redis，通知清除本地缓存
+    // 已知 key，從上游拿資料，更新 Redis，
     public abstract void refresh(final String key) throws IOException;
 }
