@@ -51,6 +51,7 @@ public class MemberController {
         try {
             memberKache.invalidateAllCache(id);
         } catch (IOException e) {
+            // handle exception
             throw new RuntimeException(e);
         }
 

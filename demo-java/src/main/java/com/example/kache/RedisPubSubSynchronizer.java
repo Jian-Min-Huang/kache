@@ -22,9 +22,12 @@ public class RedisPubSubSynchronizer implements KacheSynchronizer {
 
     private RedisMessageListenerContainer listenerContainer;
 
-    public RedisPubSubSynchronizer(final StringRedisTemplate stringRedisTemplate, final RedisConnectionFactory redisConnectionFactory) {
-        this.stringRedisTemplate = stringRedisTemplate;
+    public RedisPubSubSynchronizer(
+            final RedisConnectionFactory redisConnectionFactory,
+            final StringRedisTemplate stringRedisTemplate
+    ) {
         this.redisConnectionFactory = redisConnectionFactory;
+        this.stringRedisTemplate = stringRedisTemplate;
     }
 
     @PostConstruct

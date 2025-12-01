@@ -16,15 +16,19 @@ import java.time.Duration;
 @Configuration
 public class MemberConfig {
     @Bean
-    public KacheSynchronizer kacheSynchronizer(final StringRedisTemplate stringRedisTemplate, final RedisConnectionFactory redisConnectionFactory) {
-        return new RedisPubSubSynchronizer(stringRedisTemplate, redisConnectionFactory);
+    public KacheSynchronizer kacheSynchronizer(
+            final StringRedisTemplate stringRedisTemplate,
+            final RedisConnectionFactory redisConnectionFactory
+    ) {
+        return new RedisPubSubSynchronizer(redisConnectionFactory, stringRedisTemplate);
     }
 
     @Bean
     public Kache<MemberData> memberKache(
             final StringRedisTemplate stringRedisTemplate,
             final MemberRepository memberRepository,
-            final KacheSynchronizer kacheSynchronizer) {
+            final KacheSynchronizer kacheSynchronizer
+    ) {
         return new KacheImpl<>(
                 MemberData.class,
                 Duration.ofMinutes(5),
