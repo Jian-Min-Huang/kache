@@ -1,4 +1,4 @@
-package com.example.kache;
+package com.sporty.kache;
 
 import java.io.IOException;
 import java.util.Optional;
@@ -47,6 +47,22 @@ public abstract class Kache<T> {
     /**
      * Sample Code:
      * <pre>
+     * memberRepository.save(member);
+     * try {
+     *     memberKache.put(member.getId(), member);
+     * } catch (IOException e) {
+     *     // handle serialization exception
+     *     // handle redis exception
+     * }
+     * </pre>
+     *
+     * 我們目前的設計理念是讓呼叫端自行處理序列化錯誤與 Redis 錯誤，並自行實作補償機制
+     */
+    public abstract void put(final String key, final T data) throws IOException;
+
+    /**
+     * Sample Code:
+     * <pre>
      * memberKache.getIfPresent(id).orElse(null);
      * </pre>
      *
@@ -63,27 +79,6 @@ public abstract class Kache<T> {
     /**
      * Sample Code:
      * <pre>
-     * memberRepository.save(member);
-     * try {
-     *     memberKache.put(member.getId(), member);
-     * } catch (IOException e) {
-     *     // handle serialization exception
-     *     // handle redis exception
-     * }
-     * </pre>
-     *
-     * 我們目前的設計理念是讓呼叫端自行處理序列化錯誤與 Redis 錯誤，並自行實作補償機制
-     */
-    public abstract void put(final String key, final T data) throws IOException;
-
-    /**
-     * Received notification (Redis Pub/Sub) then clear local cache (Caffeine).
-     */
-    public abstract void invalidateLocalCache(final String kacheKey);
-
-    /**
-     * Sample Code:
-     * <pre>
      * memberRepository.delete(id);
      * try {
      *     memberKache.invalidateAllCache(id);
@@ -95,6 +90,11 @@ public abstract class Kache<T> {
      * 後續可以考慮是否要實現空值物件模式 (Null Object Pattern) 來避免頻繁的刪除操作以及 cache miss 問題
      */
     public abstract void invalidateAllCache(final String key) throws IOException;
+
+    /**
+     * Received notification (Redis Pub/Sub) then clear local cache (Caffeine).
+     */
+    public abstract void invalidateLocalCache(final String kacheKey);
 
     /**
      * Sample Code:

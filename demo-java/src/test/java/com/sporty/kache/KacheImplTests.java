@@ -1,4 +1,4 @@
-package com.example.kache;
+package com.sporty.kache;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;

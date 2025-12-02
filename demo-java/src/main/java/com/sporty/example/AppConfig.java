@@ -1,9 +1,9 @@
-package com.example.member;
+package com.sporty.example;
 
-import com.example.kache.Kache;
-import com.example.kache.KacheImpl;
-import com.example.kache.KacheSynchronizer;
-import com.example.kache.RedisPubSubSynchronizer;
+import com.sporty.kache.Kache;
+import com.sporty.kache.KacheImpl;
+import com.sporty.kache.KacheSynchronizer;
+import com.sporty.kache.RedisPubSubSynchronizer;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
@@ -14,23 +14,23 @@ import java.time.Duration;
 
 @EnableScheduling
 @Configuration
-public class MemberConfig {
+public class AppConfig {
     @Bean
     public KacheSynchronizer kacheSynchronizer(
-            final StringRedisTemplate stringRedisTemplate,
-            final RedisConnectionFactory redisConnectionFactory
+            final RedisConnectionFactory redisConnectionFactory,
+            final StringRedisTemplate stringRedisTemplate
     ) {
         return new RedisPubSubSynchronizer(redisConnectionFactory, stringRedisTemplate);
     }
 
     @Bean
-    public Kache<MemberData> memberKache(
+    public Kache<Member> memberKache(
             final StringRedisTemplate stringRedisTemplate,
             final MemberRepository memberRepository,
             final KacheSynchronizer kacheSynchronizer
     ) {
         return new KacheImpl<>(
-                MemberData.class,
+                Member.class,
                 Duration.ofMinutes(5),
                 1024L,
                 Duration.ofMinutes(10),

@@ -1,6 +1,6 @@
-package com.example.member;
+package com.sporty.example;
 
-import com.example.kache.Kache;
+import com.sporty.kache.Kache;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -11,8 +11,8 @@ import java.util.stream.IntStream;
 @Slf4j
 @Component
 @RequiredArgsConstructor
-public class MemberSchduler {
-    private final Kache<MemberData> memberKache;
+public class TaskScheduler {
+    private final Kache<Member> memberKache;
 
     @Scheduled(cron = "0 0/1 * * * ?")
     public void refresh() {

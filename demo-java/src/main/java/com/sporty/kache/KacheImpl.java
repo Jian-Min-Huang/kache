@@ -1,4 +1,4 @@
-package com.example.kache;
+package com.sporty.kache;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.benmanes.caffeine.cache.Cache;
@@ -47,6 +47,33 @@ public class KacheImpl<T> extends Kache<T> {
         this.kacheSynchronizer = kacheSynchronizer;
 
         kacheSynchronizer.registerKache(clazz.getTypeName(), this);
+    }
+
+    @Override
+    public void put(final String key, final T data) throws IOException {
+        final String kacheKey = buildKacheKey(key);
+
+        final String serialized;
+        try {
+            serialized = objectMapper.writeValueAsString(data);
+        } catch (Exception e) {
+            log.error("Failed to serialize data for key: {}", kacheKey, e);
+            throw new IOException("Failed to serialize cache payload for key: " + kacheKey, e);
+        }
+
+        try {
+            stringRedisTemplate.opsForValue().set(kacheKey, serialized, remoteCacheExpiry);
+        } catch (Exception e) {
+            log.error("Failed to write data to Redis cache for key: {}", kacheKey, e);
+            throw new IOException("Failed to write data to Redis cache for key: " + kacheKey, e);
+        }
+
+        try {
+            kacheSynchronizer.invalidateAllLocalCache(kacheKey);
+        } catch (Exception e) {
+            log.error("Failed to invalidate all local cache for key: {}", kacheKey, e);
+            throw new IOException("Failed to invalidate all local cache for key: " + kacheKey, e);
+        }
     }
 
     @Override
@@ -111,38 +138,6 @@ public class KacheImpl<T> extends Kache<T> {
     }
 
     @Override
-    public void put(final String key, final T data) throws IOException {
-        final String kacheKey = buildKacheKey(key);
-
-        final String serialized;
-        try {
-            serialized = objectMapper.writeValueAsString(data);
-        } catch (Exception e) {
-            log.error("Failed to serialize data for key: {}", kacheKey, e);
-            throw new IOException("Failed to serialize cache payload for key: " + kacheKey, e);
-        }
-
-        try {
-            stringRedisTemplate.opsForValue().set(kacheKey, serialized, remoteCacheExpiry);
-        } catch (Exception e) {
-            log.error("Failed to write data to Redis cache for key: {}", kacheKey, e);
-            throw new IOException("Failed to write data to Redis cache for key: " + kacheKey, e);
-        }
-
-        try {
-            kacheSynchronizer.invalidateAllLocalCache(kacheKey);
-        } catch (Exception e) {
-            log.error("Failed to invalidate all local cache for key: {}", kacheKey, e);
-            throw new IOException("Failed to invalidate all local cache for key: " + kacheKey, e);
-        }
-    }
-
-    @Override
-    public void invalidateLocalCache(final String kacheKey) {
-        caffeineCache.invalidate(kacheKey);
-    }
-
-    @Override
     public void invalidateAllCache(final String key) throws IOException {
         final String kacheKey = buildKacheKey(key);
         try {
@@ -158,6 +153,11 @@ public class KacheImpl<T> extends Kache<T> {
             log.error("Failed to invalidate all local cache for key: {}", kacheKey, e);
             throw new IOException("Failed to invalidate all local cache for key: " + kacheKey, e);
         }
+    }
+
+    @Override
+    public void invalidateLocalCache(final String kacheKey) {
+        caffeineCache.invalidate(kacheKey);
     }
 
     @Override

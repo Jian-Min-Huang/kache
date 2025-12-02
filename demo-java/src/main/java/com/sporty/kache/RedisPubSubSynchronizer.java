@@ -1,4 +1,4 @@
-package com.example.kache;
+package com.sporty.kache;
 
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
@@ -14,8 +14,8 @@ import java.util.concurrent.ConcurrentHashMap;
 
 @Slf4j
 public class RedisPubSubSynchronizer implements KacheSynchronizer {
-    private final StringRedisTemplate stringRedisTemplate;
     private final RedisConnectionFactory redisConnectionFactory;
+    private final StringRedisTemplate stringRedisTemplate;
 
     private final Map<String, Kache<?>> registeredKaches = new ConcurrentHashMap<>();
     private final static String INVALIDATION_CHANNEL = "KACHE:INVALIDATION";
@@ -52,6 +52,11 @@ public class RedisPubSubSynchronizer implements KacheSynchronizer {
     }
 
     @Override
+    public <T> void registerKache(final String identifier, final Kache<T> kache) {
+        registeredKaches.put(identifier, kache);
+    }
+
+    @Override
     public void invalidateAllLocalCache(final String kacheKey) {
         stringRedisTemplate.convertAndSend(INVALIDATION_CHANNEL, kacheKey);
     }
@@ -65,10 +70,5 @@ public class RedisPubSubSynchronizer implements KacheSynchronizer {
                         kache.invalidateLocalCache(kacheKey);
                     }
                 });
-    }
-
-    @Override
-    public <T> void registerKache(final String identifier, final Kache<T> kache) {
-        registeredKaches.put(identifier, kache);
     }
 }
