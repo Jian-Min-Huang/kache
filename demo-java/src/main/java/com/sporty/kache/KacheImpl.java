@@ -9,6 +9,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import java.io.IOException;
 import java.time.Duration;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Function;
 
 @Slf4j
@@ -158,6 +159,11 @@ public class KacheImpl<T> extends Kache<T> {
     @Override
     public void invalidateLocalCache(final String kacheKey) {
         caffeineCache.invalidate(kacheKey);
+    }
+
+    @Override
+    public Set<String> localCacheKeys() {
+        return caffeineCache.asMap().keySet();
     }
 
     @Override

@@ -2,6 +2,7 @@ package com.sporty.kache;
 
 import java.io.IOException;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Sample Code:
@@ -95,6 +96,8 @@ public abstract class Kache<T> {
      * Received notification (Redis Pub/Sub) then clear local cache (Caffeine).
      */
     public abstract void invalidateLocalCache(final String kacheKey);
+
+    public abstract Set<String> localCacheKeys();
 
     /**
      * Sample Code:
