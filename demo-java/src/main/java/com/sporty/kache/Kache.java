@@ -97,6 +97,9 @@ public abstract class Kache<T> {
      */
     public abstract void invalidateLocalCache(final String kacheKey);
 
+    /**
+     * Acquire all local cache keys (Caffeine).
+     */
     public abstract Set<String> localCacheKeys();
 
     /**
