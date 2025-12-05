@@ -9,7 +9,7 @@ import org.springframework.stereotype.Component;
 @Slf4j
 @Component
 @RequiredArgsConstructor
-public class TaskScheduler {
+public class Scheduler {
     private final Kache<Member> memberKache;
 
     @Scheduled(cron = "0 0/1 * * * ?")
