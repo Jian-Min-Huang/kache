@@ -8,17 +8,11 @@ import org.springframework.web.bind.annotation.RestController;
 
 @Slf4j
 @RestController
-@RequestMapping("/api")
+@RequestMapping("/api/await")
 public class AwaitController {
-    @GetMapping("/await/1/{timeout}")
-    public String await1(@PathVariable Long timeout) throws InterruptedException {
+    @GetMapping("/{timeout}")
+    public String await(@PathVariable Long timeout) throws InterruptedException {
         Thread.sleep(timeout);
-        return "Await Endpoint 1 -> Slept for " + timeout + " milliseconds";
-    }
-
-    @GetMapping("/await/2/{timeout}")
-    public String await2(@PathVariable Long timeout) throws InterruptedException {
-        Thread.sleep(timeout);
-        return "Await Endpoint 2 -> Slept for " + timeout + " milliseconds";
+        return "/api/await/timeout -> Slept for " + timeout + " milliseconds";
     }
 }
