@@ -1,9 +1,16 @@
 package com.sporty.kache;
 
-public interface KacheSynchronizer {
-    <T> void registerKache(final String identifier, final Kache<T> kache);
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
-    void invalidateAllLocalCache(final String kacheKey);
+public abstract class KacheSynchronizer {
+    protected final Map<String, Kache<?>> registeredKaches = new ConcurrentHashMap<>();
 
-    void invalidateLocalCache(final String kacheKey);
+    <T> void registerKache(final String identifier, final Kache<T> kache) {
+        registeredKaches.put(identifier, kache);
+    }
+
+    abstract void invalidateAllLocalCache(final String kacheKey);
+
+    protected abstract void invalidateLocalCache(final String kacheKey);
 }

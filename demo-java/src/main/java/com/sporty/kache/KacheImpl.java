@@ -113,14 +113,10 @@ public class KacheImpl<T> extends Kache<T> {
                     return Optional.empty();
                 }
 
-                try {
-                    final String serialized = objectMapper.writeValueAsString(upstreamValue);
-                    stringRedisTemplate.opsForValue().set(kacheKey, serialized, remoteCacheExpiry);
-                } catch (Exception e) {
-                    log.error("Failed to write back to Redis cache for key: {}", kacheKey, e);
-                }
+                final String serialized = objectMapper.writeValueAsString(upstreamValue);
+                stringRedisTemplate.opsForValue().set(kacheKey, serialized, remoteCacheExpiry);
+                kacheSynchronizer.invalidateAllLocalCache(kacheKey);
 
-                caffeineCache.put(kacheKey, upstreamValue);
                 return Optional.of(upstreamValue);
             } catch (Exception e) {
                 log.error("Failed to load data from upstream for key: {}", kacheKey, e);

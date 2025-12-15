@@ -13,11 +13,10 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Slf4j
-public class RedisPubSubSynchronizer implements KacheSynchronizer {
+public class RedisPubSubSynchronizer extends KacheSynchronizer {
     private final RedisConnectionFactory redisConnectionFactory;
     private final StringRedisTemplate stringRedisTemplate;
 
-    private final Map<String, Kache<?>> registeredKaches = new ConcurrentHashMap<>();
     private final static String INVALIDATION_CHANNEL = "KACHE:INVALIDATION";
 
     private RedisMessageListenerContainer listenerContainer;
@@ -49,11 +48,6 @@ public class RedisPubSubSynchronizer implements KacheSynchronizer {
         if (listenerContainer != null && listenerContainer.isRunning()) {
             listenerContainer.stop();
         }
-    }
-
-    @Override
-    public <T> void registerKache(final String identifier, final Kache<T> kache) {
-        registeredKaches.put(identifier, kache);
     }
 
     @Override
