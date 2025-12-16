@@ -1,5 +1,7 @@
 package com.sporty.core;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.benmanes.caffeine.cache.Cache;
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -89,6 +91,30 @@ class SCacheImplTests {
     }
 
     @Test
+    void getIfPresent_shouldReturnEmptyWhenCachesMissAndLockAcquiredButUpstreamThrowsException() {
+        String key = "1";
+        String sCacheKey = "SCACHE:%s:%s".formatted(TestData.class.getSimpleName(), key);
+        String lockKey = sCacheKey + ":lk";
+
+        when(redisTemplate.opsForValue()).thenReturn(valueOps);
+        when(valueOps.setIfAbsent(eq(lockKey), anyString(), any(Duration.class))).thenReturn(Boolean.TRUE);
+        when(upstream.apply(key)).thenThrow(new RuntimeException("Upstream failure"));
+
+        Optional<TestData> result = cache.getIfPresent(key);
+
+        assertThat(result).isEmpty();
+
+        verify(redisTemplate, times(2)).opsForValue();
+        verify(valueOps, times(1)).get(sCacheKey);
+        verify(valueOps, times(1)).setIfAbsent(eq(lockKey), anyString(), any(Duration.class));
+        verify(upstream).apply(key);
+        verify(valueOps, never()).set(eq(sCacheKey), anyString(), any(Duration.class));
+        verify(redisTemplate).delete(lockKey);
+        verify(sCacheSynchronizer).registerSCache(TestData.class.getTypeName(), cache);
+        verify(sCacheSynchronizer, never()).invalidateAllLocalCache(sCacheKey);
+    }
+
+    @Test
     void getIfPresent_shouldLoadFromUpstreamWhenCachesMissAndLockAcquiredButNoData() {
         String key = "1";
         String sCacheKey = "SCACHE:%s:%s".formatted(TestData.class.getSimpleName(), key);
@@ -110,6 +136,91 @@ class SCacheImplTests {
         verify(redisTemplate).delete(lockKey);
         verify(sCacheSynchronizer).registerSCache(TestData.class.getTypeName(), cache);
         verify(sCacheSynchronizer, never()).invalidateAllLocalCache(sCacheKey);
+    }
+
+    @Test
+    void getIfPresent_shouldReturnEmptyWhenCachesMissAndLockAcquiredButSerializationFails() throws Exception {
+        String key = "1";
+        String sCacheKey = "SCACHE:%s:%s".formatted(TestData.class.getSimpleName(), key);
+        String lockKey = sCacheKey + ":lk";
+        TestData upstreamData = new TestData(1L, "name1");
+
+        when(redisTemplate.opsForValue()).thenReturn(valueOps);
+        when(valueOps.setIfAbsent(eq(lockKey), anyString(), any(Duration.class))).thenReturn(Boolean.TRUE);
+        when(upstream.apply(key)).thenReturn(upstreamData);
+
+        ObjectMapper mockObjectMapper = Mockito.mock(ObjectMapper.class);
+        when(mockObjectMapper.writeValueAsString(any())).thenThrow(new JsonProcessingException("Serialization failure") {});
+
+        Field objectMapperField = SCacheImpl.class.getDeclaredField("objectMapper");
+        objectMapperField.setAccessible(true);
+        objectMapperField.set(cache, mockObjectMapper);
+
+        Optional<TestData> result = cache.getIfPresent(key);
+
+        assertThat(result).isEmpty();
+
+        verify(redisTemplate, times(2)).opsForValue();
+        verify(valueOps, times(1)).get(sCacheKey);
+        verify(valueOps, times(1)).setIfAbsent(eq(lockKey), anyString(), any(Duration.class));
+        verify(upstream).apply(key);
+        verify(mockObjectMapper).writeValueAsString(upstreamData);
+        verify(valueOps, never()).set(eq(sCacheKey), anyString(), any(Duration.class));
+        verify(redisTemplate).delete(lockKey);
+        verify(sCacheSynchronizer).registerSCache(TestData.class.getTypeName(), cache);
+        verify(sCacheSynchronizer, never()).invalidateAllLocalCache(sCacheKey);
+    }
+
+    @Test
+    void getIfPresent_shouldReturnEmptyWhenCachesMissAndLockAcquiredButRedisSetFails() {
+        String key = "1";
+        String sCacheKey = "SCACHE:%s:%s".formatted(TestData.class.getSimpleName(), key);
+        String lockKey = sCacheKey + ":lk";
+        TestData upstreamData = new TestData(1L, "name1");
+
+        when(redisTemplate.opsForValue()).thenReturn(valueOps);
+        when(valueOps.setIfAbsent(eq(lockKey), anyString(), any(Duration.class))).thenReturn(Boolean.TRUE);
+        when(upstream.apply(key)).thenReturn(upstreamData);
+        doThrow(new RuntimeException("Redis set failure")).when(valueOps).set(eq(sCacheKey), anyString(), any(Duration.class));
+
+        Optional<TestData> result = cache.getIfPresent(key);
+
+        assertThat(result).isEmpty();
+
+        verify(redisTemplate, times(3)).opsForValue();
+        verify(valueOps, times(1)).get(sCacheKey);
+        verify(valueOps, times(1)).setIfAbsent(eq(lockKey), anyString(), any(Duration.class));
+        verify(upstream).apply(key);
+        verify(valueOps, times(1)).set(eq(sCacheKey), anyString(), any(Duration.class));
+        verify(redisTemplate).delete(lockKey);
+        verify(sCacheSynchronizer).registerSCache(TestData.class.getTypeName(), cache);
+        verify(sCacheSynchronizer, never()).invalidateAllLocalCache(sCacheKey);
+    }
+
+    @Test
+    void getIfPresent_shouldReturnEmptyWhenCachesMissAndLockAcquiredButSynchronizerInvalidateFails() {
+        String key = "1";
+        String sCacheKey = "SCACHE:%s:%s".formatted(TestData.class.getSimpleName(), key);
+        String lockKey = sCacheKey + ":lk";
+        TestData upstreamData = new TestData(1L, "name1");
+
+        when(redisTemplate.opsForValue()).thenReturn(valueOps);
+        when(valueOps.setIfAbsent(eq(lockKey), anyString(), any(Duration.class))).thenReturn(Boolean.TRUE);
+        when(upstream.apply(key)).thenReturn(upstreamData);
+        doThrow(new RuntimeException("Synchronizer invalidate failure")).when(sCacheSynchronizer).invalidateAllLocalCache(sCacheKey);
+
+        Optional<TestData> result = cache.getIfPresent(key);
+
+        assertThat(result).isEmpty();
+
+        verify(redisTemplate, times(3)).opsForValue();
+        verify(valueOps, times(1)).get(sCacheKey);
+        verify(valueOps, times(1)).setIfAbsent(eq(lockKey), anyString(), any(Duration.class));
+        verify(upstream).apply(key);
+        verify(valueOps, times(1)).set(eq(sCacheKey), anyString(), any(Duration.class));
+        verify(redisTemplate).delete(lockKey);
+        verify(sCacheSynchronizer).registerSCache(TestData.class.getTypeName(), cache);
+        verify(sCacheSynchronizer).invalidateAllLocalCache(sCacheKey);
     }
 
     @Test
