@@ -1,4 +1,4 @@
-package com.sporty.kache;
+package com.sporty.core;
 
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
@@ -9,15 +9,13 @@ import org.springframework.data.redis.listener.ChannelTopic;
 import org.springframework.data.redis.listener.RedisMessageListenerContainer;
 
 import java.nio.charset.StandardCharsets;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 @Slf4j
-public class RedisPubSubSynchronizer extends KacheSynchronizer {
+public class RedisPubSubSynchronizer extends SCacheSynchronizer {
     private final RedisConnectionFactory redisConnectionFactory;
     private final StringRedisTemplate stringRedisTemplate;
 
-    private final static String INVALIDATION_CHANNEL = "KACHE:INVALIDATION";
+    private final static String INVALIDATION_CHANNEL = "SCACHE:INVALIDATION";
 
     private RedisMessageListenerContainer listenerContainer;
 
@@ -35,8 +33,8 @@ public class RedisPubSubSynchronizer extends KacheSynchronizer {
         listenerContainer.setConnectionFactory(redisConnectionFactory);
         listenerContainer.addMessageListener(
                 (message, pattern) -> {
-                    final String kacheKey = new String(message.getBody(), StandardCharsets.UTF_8);
-                    invalidateLocalCache(kacheKey);
+                    final String sCacheKey = new String(message.getBody(), StandardCharsets.UTF_8);
+                    invalidateLocalCache(sCacheKey);
                 },
                 new ChannelTopic(INVALIDATION_CHANNEL));
         listenerContainer.afterPropertiesSet();
@@ -51,17 +49,17 @@ public class RedisPubSubSynchronizer extends KacheSynchronizer {
     }
 
     @Override
-    public void invalidateAllLocalCache(final String kacheKey) {
-        stringRedisTemplate.convertAndSend(INVALIDATION_CHANNEL, kacheKey);
+    public void invalidateAllLocalCache(final String sCacheKey) {
+        stringRedisTemplate.convertAndSend(INVALIDATION_CHANNEL, sCacheKey);
     }
 
     @Override
-    public void invalidateLocalCache(final String kacheKey) {
-        final String identifier = kacheKey.split(":", 3)[1];
-        registeredKaches
-                .forEach((registeredIdentifier, kache) -> {
+    public void invalidateLocalCache(final String sCacheKey) {
+        final String identifier = sCacheKey.split(":", 3)[1];
+        registeredSCaches
+                .forEach((registeredIdentifier, sCache) -> {
                     if (registeredIdentifier.equals(identifier)) {
-                        kache.invalidateLocalCache(kacheKey);
+                        sCache.invalidateLocalCache(sCacheKey);
                     }
                 });
     }

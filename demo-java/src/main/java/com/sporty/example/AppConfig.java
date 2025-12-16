@@ -1,9 +1,9 @@
 package com.sporty.example;
 
-import com.sporty.kache.Kache;
-import com.sporty.kache.KacheImpl;
-import com.sporty.kache.KacheSynchronizer;
-import com.sporty.kache.RedisPubSubSynchronizer;
+import com.sporty.core.SCache;
+import com.sporty.core.SCacheSynchronizer;
+import com.sporty.core.RedisPubSubSynchronizer;
+import com.sporty.core.SCacheImpl;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
@@ -16,7 +16,7 @@ import java.time.Duration;
 @Configuration
 public class AppConfig {
     @Bean
-    public KacheSynchronizer kacheSynchronizer(
+    public SCacheSynchronizer sCacheSynchronizer(
             final RedisConnectionFactory redisConnectionFactory,
             final StringRedisTemplate stringRedisTemplate
     ) {
@@ -24,18 +24,18 @@ public class AppConfig {
     }
 
     @Bean
-    public Kache<Member> memberKache(
+    public SCache<Member> memberCache(
             final StringRedisTemplate stringRedisTemplate,
             final MemberRepository memberRepository,
-            final KacheSynchronizer kacheSynchronizer
+            final SCacheSynchronizer sCacheSynchronizer
     ) {
-        return new KacheImpl<>(
+        return new SCacheImpl<>(
                 Member.class,
                 Duration.ofMinutes(5),
                 1024L,
                 Duration.ofMinutes(10),
                 stringRedisTemplate,
                 id -> memberRepository.findById(id).orElse(null),
-                kacheSynchronizer);
+                sCacheSynchronizer);
     }
 }

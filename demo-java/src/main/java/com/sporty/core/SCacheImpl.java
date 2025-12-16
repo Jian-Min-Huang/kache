@@ -1,9 +1,9 @@
-package com.sporty.kache;
+package com.sporty.core;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
-import lombok.extern.slf4j.Slf4j;
+import lombok.extern.log4j.Log4j2;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
 import java.io.IOException;
@@ -12,26 +12,26 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
 
-@Slf4j
-public class KacheImpl<T> extends Kache<T> {
+@Log4j2
+public class SCacheImpl<T> extends SCache<T> {
     private final Class<T> clazz;
     private final Cache<String, T> caffeineCache;
     private final Duration remoteCacheExpiry;
     private final StringRedisTemplate stringRedisTemplate;
     private final Function<String, T> upstreamDataLoader;
-    private final KacheSynchronizer kacheSynchronizer;
+    private final SCacheSynchronizer sCacheSynchronizer;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private static final Duration LOCK_TTL = Duration.ofSeconds(5);
 
-    public KacheImpl(
+    public SCacheImpl(
             final Class<T> clazz,
             final Duration localCacheExpiry,
             final Long maximumSize,
             final Duration remoteCacheExpiry,
             final StringRedisTemplate stringRedisTemplate,
             final Function<String, T> upstreamDataLoader,
-            final KacheSynchronizer kacheSynchronizer
+            final SCacheSynchronizer sCacheSynchronizer
     ) {
         super(clazz.getSimpleName());
 
@@ -45,60 +45,59 @@ public class KacheImpl<T> extends Kache<T> {
         this.remoteCacheExpiry = remoteCacheExpiry;
         this.stringRedisTemplate = stringRedisTemplate;
         this.upstreamDataLoader = upstreamDataLoader;
-        this.kacheSynchronizer = kacheSynchronizer;
+        this.sCacheSynchronizer = sCacheSynchronizer;
 
-        kacheSynchronizer.registerKache(clazz.getTypeName(), this);
+        sCacheSynchronizer.registerSCache(clazz.getTypeName(), this);
     }
 
     @Override
-    public void put(final String key, final T data) throws IOException {
-        final String kacheKey = buildKacheKey(key);
+    public void put(String key, T data) throws IOException {
+        final String sCacheKey = buildSCacheKey(key);
 
         final String serialized;
         try {
             serialized = objectMapper.writeValueAsString(data);
         } catch (Exception e) {
-            log.error("Failed to serialize data for key: {}", kacheKey, e);
-            throw new IOException("Failed to serialize cache payload for key: " + kacheKey, e);
+            log.error("Failed to serialize data for key: {}", sCacheKey, e);
+            throw new IOException("Failed to serialize cache payload for key: " + sCacheKey, e);
         }
 
         try {
-            stringRedisTemplate.opsForValue().set(kacheKey, serialized, remoteCacheExpiry);
+            stringRedisTemplate.opsForValue().set(sCacheKey, serialized, remoteCacheExpiry);
         } catch (Exception e) {
-            log.error("Failed to write data to Redis cache for key: {}", kacheKey, e);
-            throw new IOException("Failed to write data to Redis cache for key: " + kacheKey, e);
+            log.error("Failed to write data to Redis cache for key: {}", sCacheKey, e);
+            throw new IOException("Failed to write data to Redis cache for key: " + sCacheKey, e);
         }
 
         try {
-            kacheSynchronizer.invalidateAllLocalCache(kacheKey);
+            sCacheSynchronizer.invalidateAllLocalCache(sCacheKey);
         } catch (Exception e) {
-            log.error("Failed to invalidate all local cache for key: {}", kacheKey, e);
-            throw new IOException("Failed to invalidate all local cache for key: " + kacheKey, e);
+            log.error("Failed to invalidate all local cache for key: {}", sCacheKey, e);
+            throw new IOException("Failed to invalidate all local cache for key: " + sCacheKey, e);
         }
     }
 
     @Override
-    public Optional<T> getIfPresent(final String key) {
-        final String kacheKey = buildKacheKey(key);
+    public Optional<T> getIfPresent(String key) {
+        final String sCacheKey = buildSCacheKey(key);
 
-        final T fromCaffeine = caffeineCache.getIfPresent(kacheKey);
+        final T fromCaffeine = caffeineCache.getIfPresent(sCacheKey);
         if (fromCaffeine != null) {
             return Optional.of(fromCaffeine);
         }
 
-        final String lockKey = kacheKey + ":lk";
-
         try {
-            final String redisValue = stringRedisTemplate.opsForValue().get(kacheKey);
+            final String redisValue = stringRedisTemplate.opsForValue().get(sCacheKey);
             if (redisValue != null) {
                 final T fromRedis = objectMapper.readValue(redisValue, clazz);
-                caffeineCache.put(kacheKey, fromRedis);
+                caffeineCache.put(sCacheKey, fromRedis);
                 return Optional.of(fromRedis);
             }
         } catch (Exception e) {
-            log.error("Failed to read from Redis cache for key: {}", kacheKey, e);
+            log.error("Failed to read from Redis cache for key: {}", sCacheKey, e);
         }
 
+        final String lockKey = sCacheKey + ":lk";
         Boolean locked = Boolean.FALSE;
         try {
             locked = stringRedisTemplate.opsForValue().setIfAbsent(lockKey, "1", LOCK_TTL);
@@ -114,12 +113,12 @@ public class KacheImpl<T> extends Kache<T> {
                 }
 
                 final String serialized = objectMapper.writeValueAsString(upstreamValue);
-                stringRedisTemplate.opsForValue().set(kacheKey, serialized, remoteCacheExpiry);
-                kacheSynchronizer.invalidateAllLocalCache(kacheKey);
+                stringRedisTemplate.opsForValue().set(sCacheKey, serialized, remoteCacheExpiry);
+                sCacheSynchronizer.invalidateAllLocalCache(sCacheKey);
 
                 return Optional.of(upstreamValue);
             } catch (Exception e) {
-                log.error("Failed to load data from upstream for key: {}", kacheKey, e);
+                log.error("Failed to load data from upstream for key: {}", sCacheKey, e);
                 return Optional.empty();
             } finally {
                 try {
@@ -129,32 +128,32 @@ public class KacheImpl<T> extends Kache<T> {
                 }
             }
         } else {
-            log.warn("Could not acquire lock to load data for key: {}", kacheKey);
+            log.warn("Could not acquire lock to load data for key: {}", sCacheKey);
             return Optional.empty();
         }
     }
 
     @Override
-    public void invalidateAllCache(final String key) throws IOException {
-        final String kacheKey = buildKacheKey(key);
+    public void invalidateAllCache(String key) throws IOException {
+        final String sCacheKey = buildSCacheKey(key);
         try {
-            stringRedisTemplate.delete(kacheKey);
+            stringRedisTemplate.delete(sCacheKey);
         } catch (Exception e) {
-            log.error("Failed to delete Redis cache for key: {}", kacheKey, e);
-            throw new IOException("Failed to delete Redis cache for key: " + kacheKey, e);
+            log.error("Failed to delete Redis cache for key: {}", sCacheKey, e);
+            throw new IOException("Failed to delete Redis cache for key: " + sCacheKey, e);
         }
 
         try {
-            kacheSynchronizer.invalidateAllLocalCache(kacheKey);
+            sCacheSynchronizer.invalidateAllLocalCache(sCacheKey);
         } catch (Exception e) {
-            log.error("Failed to invalidate all local cache for key: {}", kacheKey, e);
-            throw new IOException("Failed to invalidate all local cache for key: " + kacheKey, e);
+            log.error("Failed to invalidate all local cache for key: {}", sCacheKey, e);
+            throw new IOException("Failed to invalidate all local cache for key: " + sCacheKey, e);
         }
     }
 
     @Override
-    public void invalidateLocalCache(final String kacheKey) {
-        caffeineCache.invalidate(kacheKey);
+    public void invalidateLocalCache(String sCacheKey) {
+        caffeineCache.invalidate(sCacheKey);
     }
 
     @Override
@@ -163,7 +162,7 @@ public class KacheImpl<T> extends Kache<T> {
     }
 
     @Override
-    public void refresh(final String key) throws IOException {
+    public void refresh(String key) throws IOException {
         final T upstreamValue = upstreamDataLoader.apply(key);
         if (upstreamValue != null) {
             put(key, upstreamValue);
