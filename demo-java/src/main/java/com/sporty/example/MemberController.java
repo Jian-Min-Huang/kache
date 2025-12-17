@@ -55,6 +55,12 @@ public class MemberController {
         try {
             memberCache.invalidateAllCache(id);
         } catch (IOException e) {
+            if (e instanceof SCacheRemoteCacheOperateException) {
+                // TODO:
+            }
+            if (e instanceof SCacheLocalCacheOperateException) {
+                // TODO:
+            }
             throw new RuntimeException(e);
         }
 

@@ -35,6 +35,7 @@ public class AppConfig {
                 1024L,
                 Duration.ofMinutes(10),
                 stringRedisTemplate,
+                Duration.ofMinutes(1),
                 id -> memberRepository.findById(id).orElse(null),
                 sCacheSynchronizer);
     }

@@ -43,6 +43,7 @@ class SCacheImplTests {
                 1024L,
                 Duration.ofMinutes(10),
                 redisTemplate,
+                Duration.ofMinutes(1),
                 upstream,
                 sCacheSynchronizer
         );
@@ -211,7 +212,7 @@ class SCacheImplTests {
 
         Optional<TestData> result = cache.getIfPresent(key);
 
-        assertThat(result).isEmpty();
+        assertThat(result).contains(upstreamData);
 
         verify(redisTemplate, times(3)).opsForValue();
         verify(valueOps, times(1)).get(sCacheKey);
