@@ -33,10 +33,10 @@ public class SCacheImpl<T> extends SCache<T> {
     public static final int GC_NETWORK_BUFFER_SECONDS = 10;
     private static final String luaScript =
             "if redis.call('get', KEYS[1]) == ARGV[1] then " +
-            "    return redis.call('del', KEYS[1]) " +
-            "else " +
-            "    return 0 " +
-            "end";
+                    "    return redis.call('del', KEYS[1]) " +
+                    "else " +
+                    "    return 0 " +
+                    "end";
 
     public SCacheImpl(
             final Class<T> clazz,
@@ -87,20 +87,15 @@ public class SCacheImpl<T> extends SCache<T> {
             return Optional.of(dataFromL2);
         }
 
-        // acquire distributed lock to load data from upstream
         final String lockKey = buildSCacheLockKey(key);
         final String lockValue = UUID.randomUUID().toString();
-        boolean locked = false;
-        try {
-            locked = Boolean.TRUE.equals(stringRedisTemplate.opsForValue().setIfAbsent(lockKey, lockValue, upstreamDataLockExpiry.plusSeconds(GC_NETWORK_BUFFER_SECONDS)));
-        } catch (Exception e) {
-            log.info("Failed to acquire Redis lock for key: {}", lockKey, e);
-        }
-
-        if (locked) {
+        final long startTime = System.currentTimeMillis();
+        boolean tryLockResult = tryLock(lockKey, lockValue);
+        if (tryLockResult) {
             try {
                 final T doubleCheckDataFromL2 = readDataFromL2(sCacheKey);
                 if (doubleCheckDataFromL2 != null) {
+                    log.warn("Cache hit after acquiring lock for key: {}", sCacheKey);
                     return Optional.of(doubleCheckDataFromL2);
                 } else {
                     final T upstreamValue = upstreamDataLoader.apply(key);
@@ -118,39 +113,18 @@ public class SCacheImpl<T> extends SCache<T> {
                 log.error("Failed to load data from upstream for key: {}", sCacheKey, e);
                 return Optional.empty();
             } finally {
-                try {
-                    deleteLockSafely(lockKey, lockValue);
-                } catch (Exception e) {
-                    log.error("Failed to delete Redis lock for key: {}", lockKey, e);
+                long elapsed = System.currentTimeMillis() - startTime;
+                if (elapsed > upstreamDataLockExpiry.toMillis()) {
+                    log.warn("CRITICAL: Lock operation took {} ms, approaching LOCK_TTL {} ms for key: {}", elapsed, upstreamDataLockExpiry.toMillis(), sCacheKey);
                 }
+
+                deleteLockSafely(lockKey, lockValue);
             }
         } else {
             log.info("Could not acquire lock to load data for key: {}", sCacheKey);
             return Optional.empty();
         }
     }
-
-    private T readDataFromL1(final String sCacheKey) {
-        return caffeineCache.getIfPresent(sCacheKey);
-    }
-
-    private T readDataFromL2(final String sCacheKey) {
-        try {
-            final String redisValue = stringRedisTemplate.opsForValue().get(sCacheKey);
-            if (redisValue != null) {
-                final T fromRedis = objectMapper.readValue(redisValue, clazz);
-                sCacheSynchronizer.invalidateAllLocalCache(sCacheKey);
-                return fromRedis;
-            }
-
-            return null;
-        } catch (Exception e) {
-            log.error("Error occur when read data from L2 and invalidate all L1 for key: {}", sCacheKey, e);
-
-            return null;
-        }
-    }
-
 
     @Override
     public void invalidateAllCache(String key) throws IOException {
@@ -218,15 +192,50 @@ public class SCacheImpl<T> extends SCache<T> {
         }
     }
 
-    private void deleteLockSafely(final String lockKey, final String lockValue) {
-        final Long result = stringRedisTemplate.execute(
-                new DefaultRedisScript<>(luaScript, Long.class),
-                Collections.singletonList(lockKey),
-                lockValue
-        );
+    private T readDataFromL1(final String sCacheKey) {
+        return caffeineCache.getIfPresent(sCacheKey);
+    }
 
-        if (result == 0) {
-            log.error("CRITICAL: Lock expired or was taken by another thread for key: {}", lockKey);
+    private T readDataFromL2(final String sCacheKey) {
+        try {
+            final String redisValue = stringRedisTemplate.opsForValue().get(sCacheKey);
+            if (redisValue != null) {
+                final T fromRedis = objectMapper.readValue(redisValue, clazz);
+                sCacheSynchronizer.invalidateAllLocalCache(sCacheKey);
+                return fromRedis;
+            }
+
+            return null;
+        } catch (Exception e) {
+            log.error("Error occur when read data from L2 and invalidate all L1 for key: {}", sCacheKey, e);
+
+            return null;
+        }
+    }
+
+    private boolean tryLock(final String lockKey, final String lockValue) {
+        try {
+            return Boolean.TRUE.equals(stringRedisTemplate.opsForValue().setIfAbsent(lockKey, lockValue, upstreamDataLockExpiry.plusSeconds(GC_NETWORK_BUFFER_SECONDS)));
+        } catch (Exception e) {
+            log.info("Failed to acquire Redis lock for key: {}", lockKey, e);
+
+            return false;
+        }
+    }
+
+    private void deleteLockSafely(final String lockKey, final String lockValue) {
+        try {
+            final Long result = stringRedisTemplate.execute(
+                    new DefaultRedisScript<>(luaScript, Long.class),
+                    Collections.singletonList(lockKey),
+                    lockValue
+            );
+
+            if (result == 0) {
+                log.error("CRITICAL: Lock expired or was taken by another thread for key: {}", lockKey);
+            }
+        } catch (Exception e) {
+            log.error("Failed to delete Redis lock for key: {}", lockKey, e);
         }
     }
 }

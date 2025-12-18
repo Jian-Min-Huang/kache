@@ -69,6 +69,7 @@ class SCacheImplTests {
      *  9         x,      x,        v,          x,             x,               x,               v,          x,        x,        x
      * 10         x,      x,        x,          -,             -,               -,               -,          -,        -,        -
      */
+
     @Test
     void getIfPresent_case1() throws Exception {
         Cache<String, TestData> mockCaffeineCache = Mockito.mock(Cache.class);
