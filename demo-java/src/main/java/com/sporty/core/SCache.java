@@ -45,6 +45,10 @@ public abstract class SCache<T> {
         return "%s:%s:%s".formatted(SCACHE_KEY_PREFIX, identifier, key);
     }
 
+    protected String buildSCacheLockKey(final String key) {
+        return "%s:%s:lock:%s".formatted(SCACHE_KEY_PREFIX, identifier, key);
+    }
+
     /**
      * Sample Code:
      * <pre>

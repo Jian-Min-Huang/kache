@@ -11,9 +11,12 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 
 import java.lang.reflect.Field;
 import java.time.Duration;
+import java.util.Collections;
+import java.util.List;
 import java.util.Optional;
 import java.util.function.Function;
 
@@ -53,7 +56,7 @@ class SCacheImplTests {
     String sCacheKey = "SCACHE:%s:%s".formatted(TestData.class.getSimpleName(), key);
     String json = "{\"id\":1,\"name\":\"name1\"}";
     TestData expected = new TestData(1L, "name1");
-    String lockKey = sCacheKey + ":lk";
+    String lockKey = "SCACHE:%s:lock:%s".formatted(TestData.class.getSimpleName(), key);
     TestData upstreamData = new TestData(1L, "name1");
 
     @Test
@@ -84,7 +87,7 @@ class SCacheImplTests {
         verify(valueOps).get(sCacheKey);
         verify(upstream, never()).apply(key);
         verify(sCacheSynchronizer).registerSCache(TestData.class.getTypeName(), cache);
-        verify(sCacheSynchronizer, never()).invalidateAllLocalCache(sCacheKey);
+        verify(sCacheSynchronizer).invalidateAllLocalCache(sCacheKey);
     }
 
     @Test
@@ -101,7 +104,7 @@ class SCacheImplTests {
         verify(valueOps, times(1)).setIfAbsent(eq(lockKey), anyString(), any(Duration.class));
         verify(upstream).apply(key);
         verify(valueOps, never()).set(eq(sCacheKey), anyString(), any(Duration.class));
-        verify(redisTemplate).delete(lockKey);
+        verify(redisTemplate).execute(any(), anyList(), anyString());
         verify(sCacheSynchronizer).registerSCache(TestData.class.getTypeName(), cache);
         verify(sCacheSynchronizer, never()).invalidateAllLocalCache(sCacheKey);
     }
@@ -120,7 +123,7 @@ class SCacheImplTests {
         verify(valueOps, times(1)).setIfAbsent(eq(lockKey), anyString(), any(Duration.class));
         verify(upstream).apply(key);
         verify(valueOps, never()).set(eq(sCacheKey), anyString(), any(Duration.class));
-        verify(redisTemplate).delete(lockKey);
+        verify(redisTemplate).execute(any(), anyList(), anyString());
         verify(sCacheSynchronizer).registerSCache(TestData.class.getTypeName(), cache);
         verify(sCacheSynchronizer, never()).invalidateAllLocalCache(sCacheKey);
     }
@@ -146,7 +149,7 @@ class SCacheImplTests {
         verify(upstream).apply(key);
         verify(mockObjectMapper).writeValueAsString(upstreamData);
         verify(valueOps, never()).set(eq(sCacheKey), anyString(), any(Duration.class));
-        verify(redisTemplate).delete(lockKey);
+        verify(redisTemplate).execute(any(), anyList(), anyString());
         verify(sCacheSynchronizer).registerSCache(TestData.class.getTypeName(), cache);
         verify(sCacheSynchronizer, never()).invalidateAllLocalCache(sCacheKey);
     }
@@ -166,7 +169,7 @@ class SCacheImplTests {
         verify(valueOps, times(1)).setIfAbsent(eq(lockKey), anyString(), any(Duration.class));
         verify(upstream).apply(key);
         verify(valueOps, times(1)).set(eq(sCacheKey), anyString(), any(Duration.class));
-        verify(redisTemplate).delete(lockKey);
+        verify(redisTemplate).execute(any(), anyList(), anyString());
         verify(sCacheSynchronizer).registerSCache(TestData.class.getTypeName(), cache);
         verify(sCacheSynchronizer, never()).invalidateAllLocalCache(sCacheKey);
     }
@@ -186,7 +189,7 @@ class SCacheImplTests {
         verify(valueOps, times(1)).setIfAbsent(eq(lockKey), anyString(), any(Duration.class));
         verify(upstream).apply(key);
         verify(valueOps, times(1)).set(eq(sCacheKey), anyString(), any(Duration.class));
-        verify(redisTemplate).delete(lockKey);
+        verify(redisTemplate).execute(any(), anyList(), anyString());
         verify(sCacheSynchronizer).registerSCache(TestData.class.getTypeName(), cache);
         verify(sCacheSynchronizer).invalidateAllLocalCache(sCacheKey);
     }
@@ -205,7 +208,7 @@ class SCacheImplTests {
         verify(valueOps, times(1)).setIfAbsent(eq(lockKey), anyString(), any(Duration.class));
         verify(upstream).apply(key);
         verify(valueOps, times(1)).set(eq(sCacheKey), anyString(), any(Duration.class));
-        verify(redisTemplate).delete(lockKey);
+        verify(redisTemplate).execute(any(), anyList(), anyString());
         verify(sCacheSynchronizer).registerSCache(TestData.class.getTypeName(), cache);
         verify(sCacheSynchronizer).invalidateAllLocalCache(sCacheKey);
     }
@@ -223,7 +226,7 @@ class SCacheImplTests {
         verify(valueOps, times(1)).setIfAbsent(eq(lockKey), anyString(), any(Duration.class));
         verify(upstream, never()).apply(key);
         verify(valueOps, never()).set(eq(sCacheKey), anyString(), any(Duration.class));
-        verify(redisTemplate, never()).delete(lockKey);
+        verify(redisTemplate, never()).execute(any(), anyList(), anyString());
         verify(sCacheSynchronizer).registerSCache(TestData.class.getTypeName(), cache);
         verify(sCacheSynchronizer, never()).invalidateAllLocalCache(sCacheKey);
     }

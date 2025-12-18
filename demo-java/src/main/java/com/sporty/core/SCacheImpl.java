@@ -15,6 +15,7 @@ import java.time.Duration;
 import java.util.Collections;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import java.util.function.Function;
 
 @Log4j2
@@ -28,8 +29,14 @@ public class SCacheImpl<T> extends SCache<T> {
     private final SCacheSynchronizer sCacheSynchronizer;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
-    private static final String LOCK_SUFFIX = ":lk";
-    private static final String LOCK_VALUE = "1";
+
+    public static final int GC_NETWORK_BUFFER_SECONDS = 10;
+    private static final String luaScript =
+            "if redis.call('get', KEYS[1]) == ARGV[1] then " +
+            "    return redis.call('del', KEYS[1]) " +
+            "else " +
+            "    return 0 " +
+            "end";
 
     public SCacheImpl(
             final Class<T> clazz,
@@ -62,56 +69,40 @@ public class SCacheImpl<T> extends SCache<T> {
     @Override
     public void put(String key, T data) throws IOException {
         final String sCacheKey = buildSCacheKey(key);
-
-        final String serialized;
-        try {
-            serialized = objectMapper.writeValueAsString(data);
-        } catch (Exception e) {
-            log.error("Failed to serialize data for key: {}", sCacheKey, e);
-            throw new SCacheSerializeException("Failed to serialize cache payload for key: " + sCacheKey, e);
-        }
-
-        try {
-            stringRedisTemplate.opsForValue().set(sCacheKey, serialized, remoteCacheExpiry);
-        } catch (Exception e) {
-            log.error("Failed to write data to Redis cache for key: {}", sCacheKey, e);
-            throw new SCacheRemoteCacheOperateException("Failed to write data to Redis cache for key: " + sCacheKey, e);
-        }
-
-        try {
-            sCacheSynchronizer.invalidateAllLocalCache(sCacheKey);
-        } catch (Exception e) {
-            log.error("Failed to invalidate all local cache for key: {}", sCacheKey, e);
-            throw new SCacheLocalCacheOperateException("Failed to invalidate all local cache for key: " + sCacheKey, e);
-        }
+        final String serialized = writeJson(sCacheKey, data);
+        updateRemoteCache(sCacheKey, serialized);
+        invalidateAllLocalCache(sCacheKey);
     }
 
     @Override
     public Optional<T> getIfPresent(String key) {
         final String sCacheKey = buildSCacheKey(key);
 
+        // read data from L1
         final T fromCaffeine = caffeineCache.getIfPresent(sCacheKey);
         if (fromCaffeine != null) {
             return Optional.of(fromCaffeine);
         }
 
+        // read data from L2 and invalidate all L1
         try {
             final String redisValue = stringRedisTemplate.opsForValue().get(sCacheKey);
             if (redisValue != null) {
                 final T fromRedis = objectMapper.readValue(redisValue, clazz);
-                caffeineCache.put(sCacheKey, fromRedis);
+                sCacheSynchronizer.invalidateAllLocalCache(sCacheKey);
                 return Optional.of(fromRedis);
             }
         } catch (Exception e) {
-            log.error("Failed to read from Redis cache for key: {}", sCacheKey, e);
+            log.error("Error occur when read data from L2 and invalidate all L1 for key: {}", sCacheKey, e);
         }
 
-        final String lockKey = sCacheKey + LOCK_SUFFIX;
+        final String lockKey = buildSCacheLockKey(key);
+        final String lockValue = UUID.randomUUID().toString();
         boolean locked = false;
         try {
-            locked = Boolean.TRUE.equals(stringRedisTemplate.opsForValue().setIfAbsent(lockKey, LOCK_VALUE, upstreamDataLockExpiry.plusSeconds(10)));
+            locked = Boolean.TRUE.equals(stringRedisTemplate.opsForValue().setIfAbsent(lockKey, lockValue, upstreamDataLockExpiry.plusSeconds(GC_NETWORK_BUFFER_SECONDS)));
         } catch (Exception e) {
-            log.error("Failed to acquire Redis lock for key: {}", lockKey, e);
+            log.info("Failed to acquire Redis lock for key: {}", lockKey, e);
         }
 
         if (locked) {
@@ -123,7 +114,8 @@ public class SCacheImpl<T> extends SCache<T> {
                     return Optional.empty();
                 }
 
-                final String serialized = objectMapper.writeValueAsString(upstreamValue);
+                final String serialized = writeJson(sCacheKey, upstreamValue);
+
                 stringRedisTemplate.opsForValue().set(sCacheKey, serialized, remoteCacheExpiry);
                 try {
                     sCacheSynchronizer.invalidateAllLocalCache(sCacheKey);
@@ -137,13 +129,13 @@ public class SCacheImpl<T> extends SCache<T> {
                 return Optional.empty();
             } finally {
                 try {
-                    stringRedisTemplate.delete(lockKey);
+                    deleteLockSafely(lockKey, lockValue);
                 } catch (Exception e) {
                     log.error("Failed to delete Redis lock for key: {}", lockKey, e);
                 }
             }
         } else {
-            log.trace("Could not acquire lock to load data for key: {}", sCacheKey);
+            log.info("Could not acquire lock to load data for key: {}", sCacheKey);
             return Optional.empty();
         }
     }
@@ -151,20 +143,10 @@ public class SCacheImpl<T> extends SCache<T> {
     @Override
     public void invalidateAllCache(String key) throws IOException {
         final String sCacheKey = buildSCacheKey(key);
-        try {
-            stringRedisTemplate.delete(sCacheKey);
-        } catch (Exception e) {
-            log.error("Failed to delete Redis cache for key: {}", sCacheKey, e);
-            throw new SCacheRemoteCacheOperateException("Failed to delete Redis cache for key: " + sCacheKey, e);
-        }
-
-        try {
-            sCacheSynchronizer.invalidateAllLocalCache(sCacheKey);
-        } catch (Exception e) {
-            log.error("Failed to invalidate all local cache for key: {}", sCacheKey, e);
-            throw new SCacheLocalCacheOperateException("Failed to invalidate all local cache for key: " + sCacheKey, e);
-        }
+        invalidateRemoteCache(sCacheKey);
+        invalidateAllLocalCache(sCacheKey);
     }
+
 
     @Override
     public void invalidateLocalCache(String sCacheKey) {
@@ -184,22 +166,48 @@ public class SCacheImpl<T> extends SCache<T> {
         }
     }
 
-    private void deleteLockSafely(String lockKey, String expectedValue, long elapsed) {
-        String luaScript = "if redis.call('get', KEYS[1]) == ARGV[1] then " +
-                "    return redis.call('del', KEYS[1]) " +
-                "else " +
-                "    return 0 " +
-                "end";
-
-        Long result = stringRedisTemplate.execute(
-                new DefaultRedisScript<>(luaScript, Long.class),
-                Collections.singletonList(lockKey),
-                expectedValue
-        );
-
-        if (result == 0) {
-            log.error("CRITICAL: Lock expired or was taken by another thread for key: {} after {} ms", lockKey, elapsed);
+    private String writeJson(final String sCacheKey, final T data) throws SCacheSerializeException {
+        try {
+            return objectMapper.writeValueAsString(data);
+        } catch (Exception e) {
+            throw new SCacheSerializeException("Failed to serialize cache payload for key: " + sCacheKey, e);
         }
     }
 
+    private void updateRemoteCache(final String sCacheKey, final String serialized) throws SCacheRemoteCacheOperateException {
+        try {
+            stringRedisTemplate.opsForValue().set(sCacheKey, serialized, remoteCacheExpiry);
+        } catch (Exception e) {
+            throw new SCacheRemoteCacheOperateException("Failed to write data to Redis cache for key: " + sCacheKey, e);
+        }
+    }
+
+    private void invalidateRemoteCache(final String sCacheKey) throws SCacheRemoteCacheOperateException {
+        try {
+            stringRedisTemplate.delete(sCacheKey);
+        } catch (Exception e) {
+            throw new SCacheRemoteCacheOperateException("Failed to delete Redis cache for key: " + sCacheKey, e);
+        }
+    }
+
+    private void invalidateAllLocalCache(final String sCacheKey) throws SCacheLocalCacheOperateException {
+        try {
+            sCacheSynchronizer.invalidateAllLocalCache(sCacheKey);
+        } catch (Exception e) {
+            log.error("Failed to invalidate all local cache for key: {}", sCacheKey, e);
+            throw new SCacheLocalCacheOperateException("Failed to invalidate all local cache for key: " + sCacheKey, e);
+        }
+    }
+
+    private void deleteLockSafely(final String lockKey, final String lockValue) {
+        final Long result = stringRedisTemplate.execute(
+                new DefaultRedisScript<>(luaScript, Long.class),
+                Collections.singletonList(lockKey),
+                lockValue
+        );
+
+        if (result == 0) {
+            log.error("CRITICAL: Lock expired or was taken by another thread for key: {}", lockKey);
+        }
+    }
 }
