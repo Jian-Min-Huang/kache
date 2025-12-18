@@ -11,12 +11,9 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
-import org.springframework.data.redis.core.script.DefaultRedisScript;
 
 import java.lang.reflect.Field;
 import java.time.Duration;
-import java.util.Collections;
-import java.util.List;
 import java.util.Optional;
 import java.util.function.Function;
 
@@ -59,8 +56,21 @@ class SCacheImplTests {
     String lockKey = "SCACHE:%s:lock:%s".formatted(TestData.class.getSimpleName(), key);
     TestData upstreamData = new TestData(1L, "name1");
 
+    /*
+     *       L1 hit, L2 hit, Get lock, 2nd L2 hit, upstream empty, upstream error, upstream return, json error, L2 error, L1 error
+     *  1         v,      -,        -,          -,             -,               -,               -,          -,        -,        -
+     *  2         x,      v,        -,          -,             -,               -,               -,          -,        -,        -
+     *  3         x,      x,        v,          v,             -,               -,               -,          -,        -,        -
+     *  4         x,      x,        v,          x,             v,               -,               -,          -,        -,        -
+     *  5         x,      x,        v,          x,             x,               v,               -,          -,        -,        -
+     *  6         x,      x,        v,          x,             x,               x,               v,          v,        -,        -
+     *  7         x,      x,        v,          x,             x,               x,               v,          x,        v,        -
+     *  8         x,      x,        v,          x,             x,               x,               v,          x,        x,        v
+     *  9         x,      x,        v,          x,             x,               x,               v,          x,        x,        x
+     * 10         x,      x,        x,          -,             -,               -,               -,          -,        -,        -
+     */
     @Test
-    void getIfPresent_shouldReturnFromCaffeineWhenHit() throws Exception {
+    void getIfPresent_case1() throws Exception {
         Cache<String, TestData> mockCaffeineCache = Mockito.mock(Cache.class);
         when(mockCaffeineCache.getIfPresent(sCacheKey)).thenReturn(expected);
         Field caffeineCacheField = SCacheImpl.class.getDeclaredField("caffeineCache");
@@ -76,7 +86,7 @@ class SCacheImplTests {
     }
 
     @Test
-    void getIfPresent_shouldReturnFromRedisWhenCaffeineMissAndRedisHit() {
+    void getIfPresent_case2() {
         when(redisTemplate.opsForValue()).thenReturn(valueOps);
         when(valueOps.get(sCacheKey)).thenReturn(json);
 
@@ -85,32 +95,35 @@ class SCacheImplTests {
         assertThat(result).contains(expected);
         verify(redisTemplate).opsForValue();
         verify(valueOps).get(sCacheKey);
+        verify(valueOps, never()).setIfAbsent(eq(lockKey), anyString(), any(Duration.class));
         verify(upstream, never()).apply(key);
+        verify(valueOps, never()).set(eq(sCacheKey), anyString(), any(Duration.class));
+        verify(redisTemplate, never()).execute(any(), anyList(), anyString());
         verify(sCacheSynchronizer).registerSCache(TestData.class.getTypeName(), cache);
         verify(sCacheSynchronizer).invalidateAllLocalCache(sCacheKey);
     }
 
     @Test
-    void getIfPresent_shouldReturnEmptyWhenCachesMissAndLockAcquiredButUpstreamThrowsException() {
+    void getIfPresent_case3() {
         when(redisTemplate.opsForValue()).thenReturn(valueOps);
+        when(valueOps.get(sCacheKey)).thenReturn(null).thenReturn(json);
         when(valueOps.setIfAbsent(eq(lockKey), anyString(), any(Duration.class))).thenReturn(Boolean.TRUE);
-        when(upstream.apply(key)).thenThrow(new RuntimeException("Upstream failure"));
 
         Optional<TestData> result = cache.getIfPresent(key);
 
-        assertThat(result).isEmpty();
-        verify(redisTemplate, times(2)).opsForValue();
-        verify(valueOps, times(1)).get(sCacheKey);
-        verify(valueOps, times(1)).setIfAbsent(eq(lockKey), anyString(), any(Duration.class));
-        verify(upstream).apply(key);
+        assertThat(result).contains(expected);
+        verify(redisTemplate, times(3)).opsForValue();
+        verify(valueOps, times(2)).get(sCacheKey);
+        verify(valueOps).setIfAbsent(eq(lockKey), anyString(), any(Duration.class));
+        verify(upstream, never()).apply(key);
         verify(valueOps, never()).set(eq(sCacheKey), anyString(), any(Duration.class));
         verify(redisTemplate).execute(any(), anyList(), anyString());
         verify(sCacheSynchronizer).registerSCache(TestData.class.getTypeName(), cache);
-        verify(sCacheSynchronizer, never()).invalidateAllLocalCache(sCacheKey);
+        verify(sCacheSynchronizer).invalidateAllLocalCache(sCacheKey);
     }
 
     @Test
-    void getIfPresent_shouldLoadFromUpstreamWhenCachesMissAndLockAcquiredButNoData() {
+    void getIfPresent_case4() {
         when(redisTemplate.opsForValue()).thenReturn(valueOps);
         when(valueOps.setIfAbsent(eq(lockKey), anyString(), any(Duration.class))).thenReturn(Boolean.TRUE);
         when(upstream.apply(key)).thenReturn(null);
@@ -118,9 +131,29 @@ class SCacheImplTests {
         Optional<TestData> result = cache.getIfPresent(key);
 
         assertThat(result).isEmpty();
-        verify(redisTemplate, times(2)).opsForValue();
-        verify(valueOps, times(1)).get(sCacheKey);
-        verify(valueOps, times(1)).setIfAbsent(eq(lockKey), anyString(), any(Duration.class));
+        verify(redisTemplate, times(3)).opsForValue();
+        verify(valueOps, times(2)).get(sCacheKey);
+        verify(valueOps).setIfAbsent(eq(lockKey), anyString(), any(Duration.class));
+        verify(upstream).apply(key);
+        verify(valueOps, never()).set(eq(sCacheKey), anyString(), any(Duration.class));
+        verify(redisTemplate).execute(any(), anyList(), anyString());
+        verify(sCacheSynchronizer).registerSCache(TestData.class.getTypeName(), cache);
+        verify(sCacheSynchronizer, never()).invalidateAllLocalCache(sCacheKey);
+    }
+
+
+    @Test
+    void getIfPresent_case5() {
+        when(redisTemplate.opsForValue()).thenReturn(valueOps);
+        when(valueOps.setIfAbsent(eq(lockKey), anyString(), any(Duration.class))).thenReturn(Boolean.TRUE);
+        when(upstream.apply(key)).thenThrow(new RuntimeException("Upstream failure"));
+
+        Optional<TestData> result = cache.getIfPresent(key);
+
+        assertThat(result).isEmpty();
+        verify(redisTemplate, times(3)).opsForValue();
+        verify(valueOps, times(2)).get(sCacheKey);
+        verify(valueOps).setIfAbsent(eq(lockKey), anyString(), any(Duration.class));
         verify(upstream).apply(key);
         verify(valueOps, never()).set(eq(sCacheKey), anyString(), any(Duration.class));
         verify(redisTemplate).execute(any(), anyList(), anyString());
@@ -129,13 +162,12 @@ class SCacheImplTests {
     }
 
     @Test
-    void getIfPresent_shouldReturnEmptyWhenCachesMissAndLockAcquiredButSerializationFails() throws Exception {
+    void getIfPresent_case6() throws Exception {
         when(redisTemplate.opsForValue()).thenReturn(valueOps);
         when(valueOps.setIfAbsent(eq(lockKey), anyString(), any(Duration.class))).thenReturn(Boolean.TRUE);
         when(upstream.apply(key)).thenReturn(upstreamData);
         ObjectMapper mockObjectMapper = Mockito.mock(ObjectMapper.class);
-        when(mockObjectMapper.writeValueAsString(any())).thenThrow(new JsonProcessingException("Serialization failure") {
-        });
+        when(mockObjectMapper.writeValueAsString(any())).thenThrow(new JsonProcessingException("Serialization failure") {});
         Field objectMapperField = SCacheImpl.class.getDeclaredField("objectMapper");
         objectMapperField.setAccessible(true);
         objectMapperField.set(cache, mockObjectMapper);
@@ -143,9 +175,9 @@ class SCacheImplTests {
         Optional<TestData> result = cache.getIfPresent(key);
 
         assertThat(result).isEmpty();
-        verify(redisTemplate, times(2)).opsForValue();
-        verify(valueOps, times(1)).get(sCacheKey);
-        verify(valueOps, times(1)).setIfAbsent(eq(lockKey), anyString(), any(Duration.class));
+        verify(redisTemplate, times(3)).opsForValue();
+        verify(valueOps, times(2)).get(sCacheKey);
+        verify(valueOps).setIfAbsent(eq(lockKey), anyString(), any(Duration.class));
         verify(upstream).apply(key);
         verify(mockObjectMapper).writeValueAsString(upstreamData);
         verify(valueOps, never()).set(eq(sCacheKey), anyString(), any(Duration.class));
@@ -155,7 +187,7 @@ class SCacheImplTests {
     }
 
     @Test
-    void getIfPresent_shouldReturnEmptyWhenCachesMissAndLockAcquiredButRedisSetFails() {
+    void getIfPresent_case7() {
         when(redisTemplate.opsForValue()).thenReturn(valueOps);
         when(valueOps.setIfAbsent(eq(lockKey), anyString(), any(Duration.class))).thenReturn(Boolean.TRUE);
         when(upstream.apply(key)).thenReturn(upstreamData);
@@ -164,18 +196,18 @@ class SCacheImplTests {
         Optional<TestData> result = cache.getIfPresent(key);
 
         assertThat(result).isEmpty();
-        verify(redisTemplate, times(3)).opsForValue();
-        verify(valueOps, times(1)).get(sCacheKey);
-        verify(valueOps, times(1)).setIfAbsent(eq(lockKey), anyString(), any(Duration.class));
+        verify(redisTemplate, times(4)).opsForValue();
+        verify(valueOps, times(2)).get(sCacheKey);
+        verify(valueOps).setIfAbsent(eq(lockKey), anyString(), any(Duration.class));
         verify(upstream).apply(key);
-        verify(valueOps, times(1)).set(eq(sCacheKey), anyString(), any(Duration.class));
+        verify(valueOps).set(eq(sCacheKey), anyString(), any(Duration.class));
         verify(redisTemplate).execute(any(), anyList(), anyString());
         verify(sCacheSynchronizer).registerSCache(TestData.class.getTypeName(), cache);
         verify(sCacheSynchronizer, never()).invalidateAllLocalCache(sCacheKey);
     }
 
     @Test
-    void getIfPresent_shouldReturnEmptyWhenCachesMissAndLockAcquiredButSynchronizerInvalidateFails() {
+    void getIfPresent_case8() {
         when(redisTemplate.opsForValue()).thenReturn(valueOps);
         when(valueOps.setIfAbsent(eq(lockKey), anyString(), any(Duration.class))).thenReturn(Boolean.TRUE);
         when(upstream.apply(key)).thenReturn(upstreamData);
@@ -184,18 +216,18 @@ class SCacheImplTests {
         Optional<TestData> result = cache.getIfPresent(key);
 
         assertThat(result).contains(upstreamData);
-        verify(redisTemplate, times(3)).opsForValue();
-        verify(valueOps, times(1)).get(sCacheKey);
-        verify(valueOps, times(1)).setIfAbsent(eq(lockKey), anyString(), any(Duration.class));
+        verify(redisTemplate, times(4)).opsForValue();
+        verify(valueOps, times(2)).get(sCacheKey);
+        verify(valueOps).setIfAbsent(eq(lockKey), anyString(), any(Duration.class));
         verify(upstream).apply(key);
-        verify(valueOps, times(1)).set(eq(sCacheKey), anyString(), any(Duration.class));
+        verify(valueOps).set(eq(sCacheKey), anyString(), any(Duration.class));
         verify(redisTemplate).execute(any(), anyList(), anyString());
         verify(sCacheSynchronizer).registerSCache(TestData.class.getTypeName(), cache);
         verify(sCacheSynchronizer).invalidateAllLocalCache(sCacheKey);
     }
 
     @Test
-    void getIfPresent_shouldLoadFromUpstreamWhenCachesMissAndLockAcquired() {
+    void getIfPresent_case9() {
         when(redisTemplate.opsForValue()).thenReturn(valueOps);
         when(valueOps.setIfAbsent(eq(lockKey), anyString(), any(Duration.class))).thenReturn(Boolean.TRUE);
         when(upstream.apply(key)).thenReturn(expected);
@@ -203,18 +235,18 @@ class SCacheImplTests {
         Optional<TestData> result = cache.getIfPresent(key);
 
         assertThat(result).contains(expected);
-        verify(redisTemplate, times(3)).opsForValue();
-        verify(valueOps, times(1)).get(sCacheKey);
-        verify(valueOps, times(1)).setIfAbsent(eq(lockKey), anyString(), any(Duration.class));
+        verify(redisTemplate, times(4)).opsForValue();
+        verify(valueOps, times(2)).get(sCacheKey);
+        verify(valueOps).setIfAbsent(eq(lockKey), anyString(), any(Duration.class));
         verify(upstream).apply(key);
-        verify(valueOps, times(1)).set(eq(sCacheKey), anyString(), any(Duration.class));
+        verify(valueOps).set(eq(sCacheKey), anyString(), any(Duration.class));
         verify(redisTemplate).execute(any(), anyList(), anyString());
         verify(sCacheSynchronizer).registerSCache(TestData.class.getTypeName(), cache);
         verify(sCacheSynchronizer).invalidateAllLocalCache(sCacheKey);
     }
 
     @Test
-    void getIfPresent_shouldReturnEmptyWhenLockNotAcquired() {
+    void getIfPresent_case10() {
         when(redisTemplate.opsForValue()).thenReturn(valueOps);
         when(valueOps.setIfAbsent(eq(lockKey), anyString(), any(Duration.class))).thenReturn(Boolean.FALSE);
 
@@ -222,8 +254,8 @@ class SCacheImplTests {
 
         assertThat(result).isEmpty();
         verify(redisTemplate, times(2)).opsForValue();
-        verify(valueOps, times(1)).get(sCacheKey);
-        verify(valueOps, times(1)).setIfAbsent(eq(lockKey), anyString(), any(Duration.class));
+        verify(valueOps).get(sCacheKey);
+        verify(valueOps).setIfAbsent(eq(lockKey), anyString(), any(Duration.class));
         verify(upstream, never()).apply(key);
         verify(valueOps, never()).set(eq(sCacheKey), anyString(), any(Duration.class));
         verify(redisTemplate, never()).execute(any(), anyList(), anyString());

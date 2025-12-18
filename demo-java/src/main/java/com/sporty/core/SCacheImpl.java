@@ -78,24 +78,16 @@ public class SCacheImpl<T> extends SCache<T> {
     public Optional<T> getIfPresent(String key) {
         final String sCacheKey = buildSCacheKey(key);
 
-        // read data from L1
-        final T fromCaffeine = caffeineCache.getIfPresent(sCacheKey);
-        if (fromCaffeine != null) {
-            return Optional.of(fromCaffeine);
+        final T dataFromL1 = readDataFromL1(sCacheKey);
+        if (dataFromL1 != null) {
+            return Optional.of(dataFromL1);
+        }
+        final T dataFromL2 = readDataFromL2(sCacheKey);
+        if (dataFromL2 != null) {
+            return Optional.of(dataFromL2);
         }
 
-        // read data from L2 and invalidate all L1
-        try {
-            final String redisValue = stringRedisTemplate.opsForValue().get(sCacheKey);
-            if (redisValue != null) {
-                final T fromRedis = objectMapper.readValue(redisValue, clazz);
-                sCacheSynchronizer.invalidateAllLocalCache(sCacheKey);
-                return Optional.of(fromRedis);
-            }
-        } catch (Exception e) {
-            log.error("Error occur when read data from L2 and invalidate all L1 for key: {}", sCacheKey, e);
-        }
-
+        // acquire distributed lock to load data from upstream
         final String lockKey = buildSCacheLockKey(key);
         final String lockValue = UUID.randomUUID().toString();
         boolean locked = false;
@@ -107,23 +99,21 @@ public class SCacheImpl<T> extends SCache<T> {
 
         if (locked) {
             try {
-                // Double check Redis cache after acquiring the lock
+                final T doubleCheckDataFromL2 = readDataFromL2(sCacheKey);
+                if (doubleCheckDataFromL2 != null) {
+                    return Optional.of(doubleCheckDataFromL2);
+                } else {
+                    final T upstreamValue = upstreamDataLoader.apply(key);
+                    if (upstreamValue == null) {
+                        return Optional.empty();
+                    }
 
-                final T upstreamValue = upstreamDataLoader.apply(key);
-                if (upstreamValue == null) {
-                    return Optional.empty();
+                    final String serialized = writeJson(sCacheKey, upstreamValue);
+                    updateRemoteCache(sCacheKey, serialized);
+                    invalidateAllLocalCacheWithoutException(sCacheKey);
+
+                    return Optional.of(upstreamValue);
                 }
-
-                final String serialized = writeJson(sCacheKey, upstreamValue);
-
-                stringRedisTemplate.opsForValue().set(sCacheKey, serialized, remoteCacheExpiry);
-                try {
-                    sCacheSynchronizer.invalidateAllLocalCache(sCacheKey);
-                } catch (Exception e) {
-                    log.error("Failed to invalidate all local cache for key: {}", sCacheKey, e);
-                }
-
-                return Optional.of(upstreamValue);
             } catch (Exception e) {
                 log.error("Failed to load data from upstream for key: {}", sCacheKey, e);
                 return Optional.empty();
@@ -139,6 +129,28 @@ public class SCacheImpl<T> extends SCache<T> {
             return Optional.empty();
         }
     }
+
+    private T readDataFromL1(final String sCacheKey) {
+        return caffeineCache.getIfPresent(sCacheKey);
+    }
+
+    private T readDataFromL2(final String sCacheKey) {
+        try {
+            final String redisValue = stringRedisTemplate.opsForValue().get(sCacheKey);
+            if (redisValue != null) {
+                final T fromRedis = objectMapper.readValue(redisValue, clazz);
+                sCacheSynchronizer.invalidateAllLocalCache(sCacheKey);
+                return fromRedis;
+            }
+
+            return null;
+        } catch (Exception e) {
+            log.error("Error occur when read data from L2 and invalidate all L1 for key: {}", sCacheKey, e);
+
+            return null;
+        }
+    }
+
 
     @Override
     public void invalidateAllCache(String key) throws IOException {
@@ -194,8 +206,15 @@ public class SCacheImpl<T> extends SCache<T> {
         try {
             sCacheSynchronizer.invalidateAllLocalCache(sCacheKey);
         } catch (Exception e) {
-            log.error("Failed to invalidate all local cache for key: {}", sCacheKey, e);
             throw new SCacheLocalCacheOperateException("Failed to invalidate all local cache for key: " + sCacheKey, e);
+        }
+    }
+
+    private void invalidateAllLocalCacheWithoutException(final String sCacheKey) {
+        try {
+            sCacheSynchronizer.invalidateAllLocalCache(sCacheKey);
+        } catch (Exception e) {
+            log.error("Failed to invalidate all local cache for key: {}", sCacheKey, e);
         }
     }
 
