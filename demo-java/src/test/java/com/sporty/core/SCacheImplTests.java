@@ -101,7 +101,7 @@ class SCacheImplTests {
         verify(valueOps, never()).set(eq(sCacheKey), anyString(), any(Duration.class));
         verify(redisTemplate, never()).execute(any(), anyList(), anyString());
         verify(sCacheSynchronizer).registerSCache(TestData.class.getTypeName(), cache);
-        verify(sCacheSynchronizer).invalidateAllLocalCache(sCacheKey);
+        verify(sCacheSynchronizer, never()).invalidateAllLocalCache(sCacheKey);
     }
 
     @Test
@@ -120,7 +120,7 @@ class SCacheImplTests {
         verify(valueOps, never()).set(eq(sCacheKey), anyString(), any(Duration.class));
         verify(redisTemplate).execute(any(), anyList(), anyString());
         verify(sCacheSynchronizer).registerSCache(TestData.class.getTypeName(), cache);
-        verify(sCacheSynchronizer).invalidateAllLocalCache(sCacheKey);
+        verify(sCacheSynchronizer, never()).invalidateAllLocalCache(sCacheKey);
     }
 
     @Test
