@@ -3,7 +3,7 @@ package com.sporty.example;
 import com.sporty.core.SCache;
 import com.sporty.core.SCacheSynchronizer;
 import com.sporty.core.RedisPubSubSynchronizer;
-import com.sporty.core.SCacheImpl;
+import com.sporty.core.SCacheDefaultImpl;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
@@ -29,7 +29,7 @@ public class AppConfig {
             final MemberRepository memberRepository,
             final SCacheSynchronizer sCacheSynchronizer
     ) {
-        return new SCacheImpl<>(
+        return new SCacheDefaultImpl<>(
                 Member.class,
                 Duration.ofMinutes(5),
                 1024L,

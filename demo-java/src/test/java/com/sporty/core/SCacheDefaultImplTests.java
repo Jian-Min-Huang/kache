@@ -23,7 +23,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @SuppressWarnings("unchecked")
-class SCacheImplTests {
+class SCacheDefaultImplTests {
     private SCache<TestData> cache;
     private StringRedisTemplate redisTemplate;
     private ValueOperations<String, String> valueOps;
@@ -37,7 +37,7 @@ class SCacheImplTests {
         upstream = Mockito.mock(Function.class);
         sCacheSynchronizer = Mockito.mock(SCacheSynchronizer.class);
 
-        cache = new SCacheImpl<>(
+        cache = new SCacheDefaultImpl<>(
                 TestData.class,
                 Duration.ofMinutes(5),
                 1024L,
@@ -74,7 +74,7 @@ class SCacheImplTests {
     void getIfPresent_case1() throws Exception {
         Cache<String, TestData> mockCaffeineCache = Mockito.mock(Cache.class);
         when(mockCaffeineCache.getIfPresent(sCacheKey)).thenReturn(expected);
-        Field caffeineCacheField = SCacheImpl.class.getDeclaredField("caffeineCache");
+        Field caffeineCacheField = SCacheDefaultImpl.class.getDeclaredField("caffeineCache");
         caffeineCacheField.setAccessible(true);
         caffeineCacheField.set(cache, mockCaffeineCache);
 
@@ -169,7 +169,7 @@ class SCacheImplTests {
         when(upstream.apply(key)).thenReturn(upstreamData);
         ObjectMapper mockObjectMapper = Mockito.mock(ObjectMapper.class);
         when(mockObjectMapper.writeValueAsString(any())).thenThrow(new JsonProcessingException("Serialization failure") {});
-        Field objectMapperField = SCacheImpl.class.getDeclaredField("objectMapper");
+        Field objectMapperField = SCacheDefaultImpl.class.getDeclaredField("objectMapper");
         objectMapperField.setAccessible(true);
         objectMapperField.set(cache, mockObjectMapper);
 

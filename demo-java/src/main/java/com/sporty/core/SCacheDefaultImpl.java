@@ -19,14 +19,15 @@ import java.util.UUID;
 import java.util.concurrent.*;
 import java.util.function.Function;
 
-// refine log
 @Log4j2
-public class SCacheImpl<T> extends SCache<T> {
+public class SCacheDefaultImpl<T> extends SCache<T> {
     private final Class<T> clazz;
     private final Cache<String, T> caffeineCache;
     private final Duration remoteCacheExpiry;
     private final StringRedisTemplate stringRedisTemplate;
-    private final Duration upstreamDataLockExpiry;
+    private final Duration upstreamDataLoadTimeout;
+    private final Long upstreamDataLoadTimeoutWarningThreshold;
+    private final Duration upstreamLockTimeout;
     private final Function<String, T> upstreamDataLoader;
     private final SCacheSynchronizer sCacheSynchronizer;
 
@@ -41,13 +42,18 @@ public class SCacheImpl<T> extends SCache<T> {
                     "    return 0 " +
                     "end";
 
-    public SCacheImpl(
+    // 這個 SCacheDefaultImpl 有設計上的取捨與限制：
+    // 我們以保護上游服務為優先，因此在無法取得鎖的情況下，會直接回傳空值，已避免對上游服務造成過大壓力，所以用戶端需處理空值的邏輯
+    // 與此同時，我們也接受一定時間內的資料不一致性，所以在 put 與 invalidateAllCache 時，用戶端也需要自行處理不同Exception的錯誤情況
+    // 目前實作最大的弱點就是上游服務的資料載入時間超過預先規劃的 upstreamDataLoadTimeout
+    // 雖然我們會取消該載入請求，但如果上游服務本身沒有實作超時邏輯，仍然可能導致 upstreamExecutor 的線程被長時間佔用，最終導致線程池耗盡
+    public SCacheDefaultImpl(
             final Class<T> clazz,
             final Duration localCacheExpiry,
             final Long maximumSize,
             final Duration remoteCacheExpiry,
             final StringRedisTemplate stringRedisTemplate,
-            final Duration upstreamDataLockExpiry,
+            final Duration upstreamDataLoadTimeout,
             final Function<String, T> upstreamDataLoader,
             final SCacheSynchronizer sCacheSynchronizer
     ) {
@@ -62,7 +68,9 @@ public class SCacheImpl<T> extends SCache<T> {
                 .build();
         this.remoteCacheExpiry = remoteCacheExpiry;
         this.stringRedisTemplate = stringRedisTemplate;
-        this.upstreamDataLockExpiry = upstreamDataLockExpiry;
+        this.upstreamDataLoadTimeout = upstreamDataLoadTimeout;
+        this.upstreamDataLoadTimeoutWarningThreshold = (long) (upstreamDataLoadTimeout.toMillis() * 0.8);
+        this.upstreamLockTimeout = upstreamDataLoadTimeout.multipliedBy(2L).plusSeconds(GC_NETWORK_BUFFER_SECONDS);
         this.upstreamDataLoader = upstreamDataLoader;
         this.sCacheSynchronizer = sCacheSynchronizer;
 
@@ -117,8 +125,8 @@ public class SCacheImpl<T> extends SCache<T> {
                 return Optional.empty();
             } finally {
                 long elapsed = System.currentTimeMillis() - startTime;
-                if (elapsed > upstreamDataLockExpiry.toMillis()) {
-                    log.warn("CRITICAL: Lock operation took {} ms, approching LOCK_TTL {} ms for key: {}", elapsed, upstreamDataLockExpiry.toMillis(), sCacheKey);
+                if (elapsed > upstreamDataLoadTimeoutWarningThreshold) {
+                    log.warn("CRITICAL: Lock operation took {} ms, approaching UPSTREAM_DATA_LOAD_TIMEOUT {} ms for key: {}", elapsed, upstreamDataLoadTimeout.toMillis(), sCacheKey);
                 }
 
                 deleteLockSafely(lockKey, lockValue);
@@ -135,7 +143,6 @@ public class SCacheImpl<T> extends SCache<T> {
         invalidateRemoteCache(sCacheKey);
         invalidateAllLocalCache(sCacheKey);
     }
-
 
     @Override
     public void invalidateLocalCache(String sCacheKey) {
@@ -209,11 +216,9 @@ public class SCacheImpl<T> extends SCache<T> {
     }
 
     private T readDataFromUpstream(final String key) {
-        // Even if I use CompletableFuture to set a timeout, if an exception occurs, canceling it may still occupy the thread resources of upstreamExecutor
-        // Need to ensure that upstreamExecutor has enough threads to handle these background tasks, and that the execution of upstreamDataLoader itself also implements a timeout mechanism
-        CompletableFuture<T> upstreamDataFuture = CompletableFuture.supplyAsync(() -> upstreamDataLoader.apply(key), upstreamExecutor);
+        final CompletableFuture<T> upstreamDataFuture = CompletableFuture.supplyAsync(() -> upstreamDataLoader.apply(key), upstreamExecutor);
         try {
-            return upstreamDataFuture.get(upstreamDataLockExpiry.toMillis() / 2, TimeUnit.MILLISECONDS);
+            return upstreamDataFuture.get(upstreamDataLoadTimeout.toMillis(), TimeUnit.MILLISECONDS);
         } catch (TimeoutException e) {
             log.warn("Timeout loading data from upstream for key: {}, attempting to cancel", key);
             upstreamDataFuture.cancel(true);
@@ -231,7 +236,7 @@ public class SCacheImpl<T> extends SCache<T> {
 
     private boolean tryLock(final String lockKey, final String lockValue) {
         try {
-            return Boolean.TRUE.equals(stringRedisTemplate.opsForValue().setIfAbsent(lockKey, lockValue, upstreamDataLockExpiry.plusSeconds(GC_NETWORK_BUFFER_SECONDS)));
+            return Boolean.TRUE.equals(stringRedisTemplate.opsForValue().setIfAbsent(lockKey, lockValue, upstreamLockTimeout));
         } catch (Exception e) {
             log.info("Failed to acquire Redis lock for key: {}", lockKey, e);
 
