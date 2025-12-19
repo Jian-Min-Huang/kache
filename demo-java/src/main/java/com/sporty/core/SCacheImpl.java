@@ -16,8 +16,10 @@ import java.util.Collections;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.*;
 import java.util.function.Function;
 
+// refine log
 @Log4j2
 public class SCacheImpl<T> extends SCache<T> {
     private final Class<T> clazz;
@@ -29,6 +31,7 @@ public class SCacheImpl<T> extends SCache<T> {
     private final SCacheSynchronizer sCacheSynchronizer;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private final Executor upstreamExecutor = new ThreadPoolExecutor(8, 16, 60L, TimeUnit.SECONDS, new ArrayBlockingQueue<>(16));
 
     public static final int GC_NETWORK_BUFFER_SECONDS = 10;
     private static final String luaScript =
@@ -98,14 +101,14 @@ public class SCacheImpl<T> extends SCache<T> {
                     log.warn("Cache hit after acquiring lock for key: {}", sCacheKey);
                     return Optional.of(doubleCheckDataFromL2);
                 } else {
-                    final T upstreamValue = upstreamDataLoader.apply(key);
+                    final T upstreamValue = readDataFromUpstream(key);
                     if (upstreamValue == null) {
                         return Optional.empty();
                     }
 
                     final String serialized = writeJson(sCacheKey, upstreamValue);
                     updateRemoteCache(sCacheKey, serialized);
-                    invalidateAllLocalCacheWithoutException(sCacheKey);
+                    tryInvalidateAllLocalCache(sCacheKey);
 
                     return Optional.of(upstreamValue);
                 }
@@ -115,7 +118,7 @@ public class SCacheImpl<T> extends SCache<T> {
             } finally {
                 long elapsed = System.currentTimeMillis() - startTime;
                 if (elapsed > upstreamDataLockExpiry.toMillis()) {
-                    log.warn("CRITICAL: Lock operation took {} ms, approaching LOCK_TTL {} ms for key: {}", elapsed, upstreamDataLockExpiry.toMillis(), sCacheKey);
+                    log.warn("CRITICAL: Lock operation took {} ms, approching LOCK_TTL {} ms for key: {}", elapsed, upstreamDataLockExpiry.toMillis(), sCacheKey);
                 }
 
                 deleteLockSafely(lockKey, lockValue);
@@ -184,14 +187,6 @@ public class SCacheImpl<T> extends SCache<T> {
         }
     }
 
-    private void invalidateAllLocalCacheWithoutException(final String sCacheKey) {
-        try {
-            sCacheSynchronizer.invalidateAllLocalCache(sCacheKey);
-        } catch (Exception e) {
-            log.error("Failed to invalidate all local cache for key: {}", sCacheKey, e);
-        }
-    }
-
     private T readDataFromL1(final String sCacheKey) {
         return caffeineCache.getIfPresent(sCacheKey);
     }
@@ -201,7 +196,7 @@ public class SCacheImpl<T> extends SCache<T> {
             final String redisValue = stringRedisTemplate.opsForValue().get(sCacheKey);
             if (redisValue != null) {
                 final T fromRedis = objectMapper.readValue(redisValue, clazz);
-                sCacheSynchronizer.invalidateAllLocalCache(sCacheKey);
+                caffeineCache.put(sCacheKey, fromRedis);
                 return fromRedis;
             }
 
@@ -213,6 +208,27 @@ public class SCacheImpl<T> extends SCache<T> {
         }
     }
 
+    private T readDataFromUpstream(final String key) {
+        // Even if I use CompletableFuture to set a timeout, if an exception occurs, canceling it may still occupy the thread resources of upstreamExecutor
+        // Need to ensure that upstreamExecutor has enough threads to handle these background tasks, and that the execution of upstreamDataLoader itself also implements a timeout mechanism
+        CompletableFuture<T> upstreamDataFuture = CompletableFuture.supplyAsync(() -> upstreamDataLoader.apply(key), upstreamExecutor);
+        try {
+            return upstreamDataFuture.get(upstreamDataLockExpiry.toMillis() / 2, TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
+            log.warn("Timeout loading data from upstream for key: {}, attempting to cancel", key);
+            upstreamDataFuture.cancel(true);
+            return null;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.error("Interrupted while loading data from upstream for key: {}", key);
+            upstreamDataFuture.cancel(true);
+            return null;
+        } catch (ExecutionException e) {
+            log.error("Failed to load data from upstream for key: {}", key, e.getCause());
+            return null;
+        }
+    }
+
     private boolean tryLock(final String lockKey, final String lockValue) {
         try {
             return Boolean.TRUE.equals(stringRedisTemplate.opsForValue().setIfAbsent(lockKey, lockValue, upstreamDataLockExpiry.plusSeconds(GC_NETWORK_BUFFER_SECONDS)));
@@ -220,6 +236,14 @@ public class SCacheImpl<T> extends SCache<T> {
             log.info("Failed to acquire Redis lock for key: {}", lockKey, e);
 
             return false;
+        }
+    }
+
+    private void tryInvalidateAllLocalCache(final String sCacheKey) {
+        try {
+            sCacheSynchronizer.invalidateAllLocalCache(sCacheKey);
+        } catch (Exception e) {
+            log.error("Failed to invalidate all local cache for key: {}", sCacheKey, e);
         }
     }
 
