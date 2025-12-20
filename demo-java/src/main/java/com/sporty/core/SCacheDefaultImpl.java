@@ -107,6 +107,7 @@ public class SCacheDefaultImpl<T> extends SCache<T> implements DisposableBean {
                 keepAliveTime,
                 TimeUnit.SECONDS,
                 new ArrayBlockingQueue<>(workerQueueCapacity),
+                new SCacheThreadFactory(clazz.getTypeName()),
                 new ThreadPoolExecutor.AbortPolicy()
         );
         this.sCacheSynchronizer = sCacheSynchronizer;
