@@ -32,12 +32,15 @@ public class MemberController {
         } catch (SCacheSerializeException | SCacheRemoteCacheOperateException | SCacheLocalCacheOperateException e) {
             if (e instanceof SCacheSerializeException) {
                 // TODO:
+                log.error(e.getMessage(), e);
             }
             if (e instanceof SCacheRemoteCacheOperateException) {
                 // TODO:
+                log.error(e.getMessage(), e);
             }
             if (e instanceof SCacheLocalCacheOperateException) {
                 // TODO:
+                log.error(e.getMessage(), e);
             }
         }
 
@@ -60,9 +63,11 @@ public class MemberController {
         } catch (SCacheRemoteCacheOperateException | SCacheLocalCacheOperateException e) {
             if (e instanceof SCacheRemoteCacheOperateException) {
                 // TODO:
+                log.error(e.getMessage(), e);
             }
             if (e instanceof SCacheLocalCacheOperateException) {
                 // TODO:
+                log.error(e.getMessage(), e);
             }
         }
 

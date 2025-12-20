@@ -128,10 +128,16 @@ public class SCacheDefaultImpl<T> extends SCache<T> implements DisposableBean {
         final String cacheKey = buildCacheKey(key);
 
         final Optional<T> dataFromL1 = readDataFromL1(cacheKey);
-        if (dataFromL1.isPresent()) return dataFromL1;
+        if (dataFromL1.isPresent()) {
+            log.debug("L1 cache hit for key: {}", cacheKey);
+            return dataFromL1;
+        }
 
         final Optional<T> dataFromL2 = readDataFromL2(cacheKey);
-        if (dataFromL2.isPresent()) return dataFromL2;
+        if (dataFromL2.isPresent()) {
+            log.debug("L2 cache hit for key: {}", cacheKey);
+            return dataFromL2;
+        }
 
         return readDataFromUpstream(key);
     }
