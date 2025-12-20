@@ -11,20 +11,20 @@ import org.springframework.data.redis.listener.RedisMessageListenerContainer;
 import java.nio.charset.StandardCharsets;
 
 @Slf4j
-public class RedisPubSubSynchronizer extends SCacheSynchronizer {
-    private final RedisConnectionFactory redisConnectionFactory;
+public class SCacheSynchronizerDefaultImpl extends SCacheSynchronizer {
     private final StringRedisTemplate stringRedisTemplate;
+    private final RedisConnectionFactory redisConnectionFactory;
 
     private final static String INVALIDATION_CHANNEL = "SCACHE:INVALIDATION";
 
     private RedisMessageListenerContainer listenerContainer;
 
-    public RedisPubSubSynchronizer(
-            final RedisConnectionFactory redisConnectionFactory,
-            final StringRedisTemplate stringRedisTemplate
+    public SCacheSynchronizerDefaultImpl(
+            final StringRedisTemplate stringRedisTemplate,
+            final RedisConnectionFactory redisConnectionFactory
     ) {
-        this.redisConnectionFactory = redisConnectionFactory;
         this.stringRedisTemplate = stringRedisTemplate;
+        this.redisConnectionFactory = redisConnectionFactory;
     }
 
     @PostConstruct

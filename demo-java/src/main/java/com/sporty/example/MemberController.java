@@ -25,7 +25,7 @@ public class MemberController {
         memberRepository.save(id, memberData);
         try {
             memberCache.put(id, memberData);
-        } catch (IOException e) {
+        } catch (SCacheSerializeException | SCacheRemoteCacheOperateException | SCacheLocalCacheOperateException e) {
             if (e instanceof SCacheSerializeException) {
                 // TODO:
             }
@@ -35,7 +35,6 @@ public class MemberController {
             if (e instanceof SCacheLocalCacheOperateException) {
                 // TODO:
             }
-            throw new RuntimeException(e);
         }
 
         return ResponseEntity.created(null).build();
@@ -54,14 +53,13 @@ public class MemberController {
         memberRepository.delete(id);
         try {
             memberCache.invalidateAllCache(id);
-        } catch (IOException e) {
+        } catch (SCacheRemoteCacheOperateException | SCacheLocalCacheOperateException e) {
             if (e instanceof SCacheRemoteCacheOperateException) {
                 // TODO:
             }
             if (e instanceof SCacheLocalCacheOperateException) {
                 // TODO:
             }
-            throw new RuntimeException(e);
         }
 
         return ResponseEntity.noContent().build();

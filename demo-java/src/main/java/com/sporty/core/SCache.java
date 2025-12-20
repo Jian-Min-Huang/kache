@@ -1,5 +1,9 @@
 package com.sporty.core;
 
+import com.sporty.exception.SCacheLocalCacheOperateException;
+import com.sporty.exception.SCacheRemoteCacheOperateException;
+import com.sporty.exception.SCacheSerializeException;
+
 import java.io.IOException;
 import java.util.Optional;
 import java.util.Set;
@@ -63,7 +67,7 @@ public abstract class SCache<T> {
      * This method is usually called after data changes to ensure consistency between the Cache and the database.
      *
      */
-    public abstract void put(final String key, final T data) throws IOException;
+    public abstract void put(final String key, final T data) throws SCacheSerializeException, SCacheRemoteCacheOperateException, SCacheLocalCacheOperateException;
 
     /**
      * Sample Code:
@@ -86,7 +90,7 @@ public abstract class SCache<T> {
      *
      * This method is usually called after data deletion to ensure consistency between the Cache and the database.
      */
-    public abstract void invalidateAllCache(final String key) throws IOException;
+    public abstract void invalidateAllCache(final String key) throws SCacheRemoteCacheOperateException, SCacheLocalCacheOperateException;
 
     /**
      * Received notification then clear local cache.

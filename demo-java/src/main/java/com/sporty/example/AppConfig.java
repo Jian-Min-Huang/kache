@@ -1,8 +1,7 @@
 package com.sporty.example;
 
 import com.sporty.core.SCache;
-import com.sporty.core.SCacheSynchronizer;
-import com.sporty.core.RedisPubSubSynchronizer;
+import com.sporty.core.SCacheSynchronizerDefaultImpl;
 import com.sporty.core.SCacheDefaultImpl;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -16,18 +15,10 @@ import java.time.Duration;
 @Configuration
 public class AppConfig {
     @Bean
-    public SCacheSynchronizer sCacheSynchronizer(
-            final RedisConnectionFactory redisConnectionFactory,
-            final StringRedisTemplate stringRedisTemplate
-    ) {
-        return new RedisPubSubSynchronizer(redisConnectionFactory, stringRedisTemplate);
-    }
-
-    @Bean
     public SCache<Member> memberCache(
             final StringRedisTemplate stringRedisTemplate,
             final MemberRepository memberRepository,
-            final SCacheSynchronizer sCacheSynchronizer
+            final RedisConnectionFactory redisConnectionFactory
     ) {
         return new SCacheDefaultImpl<>(
                 Member.class,
@@ -37,6 +28,6 @@ public class AppConfig {
                 stringRedisTemplate,
                 Duration.ofMinutes(1),
                 id -> memberRepository.findById(id).orElse(null),
-                sCacheSynchronizer);
+                new SCacheSynchronizerDefaultImpl(stringRedisTemplate, redisConnectionFactory));
     }
 }

@@ -16,7 +16,13 @@ import java.util.Collections;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.*;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executor;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.function.Function;
 
 @Log4j2
@@ -35,18 +41,25 @@ public class SCacheDefaultImpl<T> extends SCache<T> {
     private final Executor upstreamExecutor = new ThreadPoolExecutor(8, 16, 60L, TimeUnit.SECONDS, new ArrayBlockingQueue<>(16));
 
     public static final int GC_NETWORK_BUFFER_SECONDS = 10;
-    private static final String luaScript =
-            "if redis.call('get', KEYS[1]) == ARGV[1] then " +
-                    "    return redis.call('del', KEYS[1]) " +
-                    "else " +
-                    "    return 0 " +
-                    "end";
+    private static final String luaScript = """
+            if redis.call('get', KEYS[1]) == ARGV[1] then
+                return redis.call('del', KEYS[1])
+            else
+                return 0
+            end
+            """;
 
-    // 這個 SCacheDefaultImpl 有設計上的取捨與限制：
-    // 我們以保護上游服務為優先，因此在無法取得鎖的情況下，會直接回傳空值，已避免對上游服務造成過大壓力，所以用戶端需處理空值的邏輯
-    // 與此同時，我們也接受一定時間內的資料不一致性，所以在 put 與 invalidateAllCache 時，用戶端也需要自行處理不同Exception的錯誤情況
-    // 目前實作最大的弱點就是上游服務的資料載入時間超過預先規劃的 upstreamDataLoadTimeout
-    // 雖然我們會取消該載入請求，但如果上游服務本身沒有實作超時邏輯，仍然可能導致 upstreamExecutor 的線程被長時間佔用，最終導致線程池耗盡
+    /**
+     * Note:
+     * <pre>
+     * This SCacheDefaultImpl has design trade-offs and limitations:
+     *
+     * 1. We prioritize protecting upstream services, so if we cannot acquire the lock, we return an empty value to avoid putting too much pressure on upstream services. Therefore, clients need to handle the empty value situation.
+     * 2. We also accept data inconsistency within a certain time frame, so when calling <b>put</b> and <b>invalidateAllCache</b> methods, clients need to handle different Exceptions.
+     * 3. The biggest weakness of the current implementation is when the upstream service's data loading time exceeds the pre-planned <b>upstreamDataLoadTimeout</b>.
+     * 4. Although we have implemented a mechanism to cancel that load, it only works for the client side. If the upstream service itself does not implement a timeout logic, it may still lead to the <b>upstreamExecutor</b> threads being occupied for a long time, potentially exhausting the thread pool.
+     * </pre>
+     */
     public SCacheDefaultImpl(
             final Class<T> clazz,
             final Duration localCacheExpiry,
@@ -78,7 +91,7 @@ public class SCacheDefaultImpl<T> extends SCache<T> {
     }
 
     @Override
-    public void put(String key, T data) throws IOException {
+    public void put(String key, T data) throws SCacheSerializeException, SCacheRemoteCacheOperateException, SCacheLocalCacheOperateException {
         final String sCacheKey = buildSCacheKey(key);
         final String serialized = writeJson(sCacheKey, data);
         updateRemoteCache(sCacheKey, serialized);
@@ -91,10 +104,12 @@ public class SCacheDefaultImpl<T> extends SCache<T> {
 
         final T dataFromL1 = readDataFromL1(sCacheKey);
         if (dataFromL1 != null) {
+            log.debug("L1 cache hit for key: {}", sCacheKey);
             return Optional.of(dataFromL1);
         }
         final T dataFromL2 = readDataFromL2(sCacheKey);
         if (dataFromL2 != null) {
+            log.debug("L2 cache hit for key: {}", sCacheKey);
             return Optional.of(dataFromL2);
         }
 
@@ -106,39 +121,41 @@ public class SCacheDefaultImpl<T> extends SCache<T> {
             try {
                 final T doubleCheckDataFromL2 = readDataFromL2(sCacheKey);
                 if (doubleCheckDataFromL2 != null) {
-                    log.warn("Cache hit after acquiring lock for key: {}", sCacheKey);
+                    log.info("L2 cache hit on double-check after lock acquisition for key: {}", sCacheKey);
                     return Optional.of(doubleCheckDataFromL2);
                 } else {
                     final T upstreamValue = readDataFromUpstream(key);
                     if (upstreamValue == null) {
+                        log.info("Upstream returned null for key: {}", sCacheKey);
                         return Optional.empty();
                     }
 
                     final String serialized = writeJson(sCacheKey, upstreamValue);
                     updateRemoteCache(sCacheKey, serialized);
                     tryInvalidateAllLocalCache(sCacheKey);
+                    log.info("Successfully loaded and cached data from upstream for key: {}", sCacheKey);
 
                     return Optional.of(upstreamValue);
                 }
             } catch (Exception e) {
-                log.error("Failed to load data from upstream for key: {}", sCacheKey, e);
+                log.error("Failed to load data from upstream for key: {}, returning empty", sCacheKey, e);
                 return Optional.empty();
             } finally {
                 long elapsed = System.currentTimeMillis() - startTime;
                 if (elapsed > upstreamDataLoadTimeoutWarningThreshold) {
-                    log.warn("CRITICAL: Lock operation took {} ms, approaching UPSTREAM_DATA_LOAD_TIMEOUT {} ms for key: {}", elapsed, upstreamDataLoadTimeout.toMillis(), sCacheKey);
+                    log.error("CRITICAL: Upstream load operation took {} ms (>80% of timeout {} ms) for key: {}", elapsed, upstreamDataLoadTimeout.toMillis(), sCacheKey);
                 }
 
                 deleteLockSafely(lockKey, lockValue);
             }
         } else {
-            log.info("Could not acquire lock to load data for key: {}", sCacheKey);
+            log.info("Lock already held by another instance for key: {}, returning empty to protect upstream", sCacheKey);
             return Optional.empty();
         }
     }
 
     @Override
-    public void invalidateAllCache(String key) throws IOException {
+    public void invalidateAllCache(String key) throws SCacheRemoteCacheOperateException, SCacheLocalCacheOperateException {
         final String sCacheKey = buildSCacheKey(key);
         invalidateRemoteCache(sCacheKey);
         invalidateAllLocalCache(sCacheKey);
@@ -209,7 +226,7 @@ public class SCacheDefaultImpl<T> extends SCache<T> {
 
             return null;
         } catch (Exception e) {
-            log.error("Error occur when read data from L2 and invalidate all L1 for key: {}", sCacheKey, e);
+            log.error("Failed to read from L2 cache for key: {}, returning null", sCacheKey, e);
 
             return null;
         }
@@ -220,16 +237,16 @@ public class SCacheDefaultImpl<T> extends SCache<T> {
         try {
             return upstreamDataFuture.get(upstreamDataLoadTimeout.toMillis(), TimeUnit.MILLISECONDS);
         } catch (TimeoutException e) {
-            log.warn("Timeout loading data from upstream for key: {}, attempting to cancel", key);
+            log.error("Upstream data load timed out after {} ms for key: {}, cancelling task and returning null", upstreamDataLoadTimeout.toMillis(), key);
             upstreamDataFuture.cancel(true);
             return null;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            log.error("Interrupted while loading data from upstream for key: {}", key);
+            log.error("Interrupted while loading data from upstream for key: {}, cancelling task and returning null", key, e);
             upstreamDataFuture.cancel(true);
             return null;
         } catch (ExecutionException e) {
-            log.error("Failed to load data from upstream for key: {}", key, e.getCause());
+            log.error("Upstream data loader threw exception for key: {}, returning null", key, e);
             return null;
         }
     }
@@ -238,7 +255,7 @@ public class SCacheDefaultImpl<T> extends SCache<T> {
         try {
             return Boolean.TRUE.equals(stringRedisTemplate.opsForValue().setIfAbsent(lockKey, lockValue, upstreamLockTimeout));
         } catch (Exception e) {
-            log.info("Failed to acquire Redis lock for key: {}", lockKey, e);
+            log.warn("Exception while attempting to acquire Redis lock for key: {}, treating as lock failure", lockKey, e);
 
             return false;
         }
@@ -248,7 +265,7 @@ public class SCacheDefaultImpl<T> extends SCache<T> {
         try {
             sCacheSynchronizer.invalidateAllLocalCache(sCacheKey);
         } catch (Exception e) {
-            log.error("Failed to invalidate all local cache for key: {}", sCacheKey, e);
+            log.error("Failed to invalidate local cache across instances for key: {}, may cause temporary inconsistency", sCacheKey, e);
         }
     }
 
@@ -261,10 +278,10 @@ public class SCacheDefaultImpl<T> extends SCache<T> {
             );
 
             if (result == 0) {
-                log.error("CRITICAL: Lock expired or was taken by another thread for key: {}", lockKey);
+                log.error("CRITICAL: Lock expired or ownership lost before release for key: {} - upstream load may have exceeded timeout", lockKey);
             }
         } catch (Exception e) {
-            log.error("Failed to delete Redis lock for key: {}", lockKey, e);
+            log.error("Failed to delete Redis lock for key: {}, lock will auto-expire in {} seconds", lockKey, upstreamLockTimeout.getSeconds(), e);
         }
     }
 }
