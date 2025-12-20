@@ -19,10 +19,7 @@ public class SCacheSynchronizerDefaultImpl extends SCacheSynchronizer {
 
     private RedisMessageListenerContainer listenerContainer;
 
-    public SCacheSynchronizerDefaultImpl(
-            final StringRedisTemplate stringRedisTemplate,
-            final RedisConnectionFactory redisConnectionFactory
-    ) {
+    public SCacheSynchronizerDefaultImpl(final StringRedisTemplate stringRedisTemplate, final RedisConnectionFactory redisConnectionFactory) {
         this.stringRedisTemplate = stringRedisTemplate;
         this.redisConnectionFactory = redisConnectionFactory;
     }

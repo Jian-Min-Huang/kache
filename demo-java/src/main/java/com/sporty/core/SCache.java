@@ -45,11 +45,11 @@ public abstract class SCache<T> {
         this.identifier = identifier;
     }
 
-    protected String buildSCacheKey(final String key) {
+    protected String buildCacheKey(final String key) {
         return "%s:%s:%s".formatted(SCACHE_KEY_PREFIX, identifier, key);
     }
 
-    protected String buildSCacheLockKey(final String key) {
+    protected String buildCacheLockKey(final String key) {
         return "%s:%s:lock:%s".formatted(SCACHE_KEY_PREFIX, identifier, key);
     }
 

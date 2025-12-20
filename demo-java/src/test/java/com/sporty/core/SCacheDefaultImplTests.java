@@ -45,6 +45,10 @@ class SCacheDefaultImplTests {
                 redisTemplate,
                 Duration.ofMinutes(1),
                 upstream,
+                8,
+                16,
+                60L,
+                16,
                 sCacheSynchronizer
         );
     }
