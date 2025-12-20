@@ -59,7 +59,7 @@ public class SCacheDefaultImpl<T> extends SCache<T> implements DisposableBean {
                 return 0
             end
             """;
-    private static final int THREAD_POOL_EXECUTOR_AWAIT_TERMINATION_SECONDS = 15;
+    private static final int THREAD_POOL_EXECUTOR_AWAIT_TERMINATION_SECONDS = 30;
 
     /**
      * Note:
@@ -126,56 +126,13 @@ public class SCacheDefaultImpl<T> extends SCache<T> implements DisposableBean {
     public Optional<T> getIfPresent(String key) {
         final String cacheKey = buildCacheKey(key);
 
-        final T dataFromL1 = readDataFromL1(cacheKey);
-        if (dataFromL1 != null) {
-            log.debug("L1 cache hit for key: {}", cacheKey);
-            return Optional.of(dataFromL1);
-        }
-        final T dataFromL2 = readDataFromL2(cacheKey);
-        if (dataFromL2 != null) {
-            log.debug("L2 cache hit for key: {}", cacheKey);
-            return Optional.of(dataFromL2);
-        }
+        final Optional<T> dataFromL1 = readDataFromL1(cacheKey);
+        if (dataFromL1.isPresent()) return dataFromL1;
 
-        final String cacheLockKey = buildCacheLockKey(key);
-        final String cacheLockValue = UUID.randomUUID().toString();
-        final long startTime = System.currentTimeMillis();
-        boolean tryLockResult = tryLock(cacheLockKey, cacheLockValue);
-        if (tryLockResult) {
-            try {
-                final T doubleCheckDataFromL2 = readDataFromL2(cacheKey);
-                if (doubleCheckDataFromL2 != null) {
-                    log.info("L2 cache hit on double-check after lock acquisition for key: {}", cacheKey);
-                    return Optional.of(doubleCheckDataFromL2);
-                } else {
-                    final T upstreamValue = readDataFromUpstream(key);
-                    if (upstreamValue == null) {
-                        log.info("Upstream returned null for key: {}", cacheKey);
-                        return Optional.empty();
-                    }
+        final Optional<T> dataFromL2 = readDataFromL2(cacheKey);
+        if (dataFromL2.isPresent()) return dataFromL2;
 
-                    final String serialized = writeJson(cacheKey, upstreamValue);
-                    updateRemoteCache(cacheKey, serialized);
-                    invalidateAllLocalCacheSilently(cacheKey);
-                    log.info("Successfully loaded and cached data from upstream for key: {}", cacheKey);
-
-                    return Optional.of(upstreamValue);
-                }
-            } catch (Exception e) {
-                log.error("Failed to load data from upstream for key: {}, returning empty", cacheKey, e);
-                return Optional.empty();
-            } finally {
-                long elapsed = System.currentTimeMillis() - startTime;
-                if (elapsed > upstreamDataLoadTimeoutWarningThreshold) {
-                    log.error("CRITICAL: Upstream load operation took {} ms (>80% of timeout {} ms) for key: {}", elapsed, upstreamDataLoadTimeout.toMillis(), cacheKey);
-                }
-
-                releaseLock(cacheLockKey, cacheLockValue);
-            }
-        } else {
-            log.info("Lock already held by another instance for key: {}, returning empty to protect upstream", cacheKey);
-            return Optional.empty();
-        }
+        return readDataFromUpstream(key);
     }
 
     @Override
@@ -253,28 +210,79 @@ public class SCacheDefaultImpl<T> extends SCache<T> implements DisposableBean {
         }
     }
 
-    private T readDataFromL1(final String cacheKey) {
-        return caffeineCache.getIfPresent(cacheKey);
-    }
-
-    private T readDataFromL2(final String cacheKey) {
+    private void invalidateAllLocalCacheSilently(final String cacheKey) {
         try {
-            final String redisValue = stringRedisTemplate.opsForValue().get(cacheKey);
-            if (redisValue != null) {
-                final T fromRedis = objectMapper.readValue(redisValue, clazz);
-                caffeineCache.put(cacheKey, fromRedis);
-                return fromRedis;
-            }
-
-            return null;
+            sCacheSynchronizer.invalidateAllLocalCache(cacheKey);
         } catch (Exception e) {
-            log.error("Failed to read from L2 cache for key: {}, returning null", cacheKey, e);
-
-            return null;
+            log.error("Failed to invalidate local cache across instances for key: {}, may cause temporary inconsistency", cacheKey, e);
         }
     }
 
-    private T readDataFromUpstream(final String key) {
+    private Optional<T> readDataFromL1(final String cacheKey) {
+        return Optional.ofNullable(caffeineCache.getIfPresent(cacheKey));
+    }
+
+    private Optional<T> readDataFromL2(final String cacheKey) {
+        try {
+            final String redisValue = stringRedisTemplate.opsForValue().get(cacheKey);
+            if (redisValue != null && !redisValue.isBlank()) {
+                final T fromRedis = objectMapper.readValue(redisValue, clazz);
+                caffeineCache.put(cacheKey, fromRedis);
+                return Optional.of(fromRedis);
+            }
+
+            return Optional.empty();
+        } catch (Exception e) {
+            log.error("Failed to read from L2 cache for key: {}, returning null", cacheKey, e);
+
+            return Optional.empty();
+        }
+    }
+
+    public Optional<T> readDataFromUpstream(final String key) {
+        final String cacheKey = buildCacheKey(key);
+        final String cacheLockKey = buildCacheLockKey(key);
+        final String cacheLockValue = UUID.randomUUID().toString();
+        final long startTime = System.currentTimeMillis();
+        boolean tryLockResult = tryLock(cacheLockKey, cacheLockValue);
+        if (tryLockResult) {
+            try {
+                final Optional<T> doubleCheckDataFromL2 = readDataFromL2(cacheKey);
+                if (doubleCheckDataFromL2.isPresent()) {
+                    log.info("L2 cache hit on double-check after lock acquisition for key: {}", cacheKey);
+                    return doubleCheckDataFromL2;
+                } else {
+                    final T upstreamValue = handleUpstream(key);
+                    if (upstreamValue == null) {
+                        log.info("Upstream returned null for key: {}", cacheKey);
+                        return Optional.empty();
+                    }
+
+                    final String serialized = writeJson(cacheKey, upstreamValue);
+                    updateRemoteCache(cacheKey, serialized);
+                    invalidateAllLocalCacheSilently(cacheKey);
+                    log.info("Successfully loaded and cached data from upstream for key: {}", cacheKey);
+
+                    return Optional.of(upstreamValue);
+                }
+            } catch (Exception e) {
+                log.error("Failed to load data from upstream for key: {}, returning empty", cacheKey, e);
+                return Optional.empty();
+            } finally {
+                long elapsed = System.currentTimeMillis() - startTime;
+                if (elapsed > upstreamDataLoadTimeoutWarningThreshold) {
+                    log.error("CRITICAL: Upstream load operation took {} ms (>80% of timeout {} ms) for key: {}", elapsed, upstreamDataLoadTimeout.toMillis(), cacheKey);
+                }
+
+                releaseLock(cacheLockKey, cacheLockValue);
+            }
+        } else {
+            log.info("Lock already held by another instance for key: {}, returning empty to protect upstream", cacheKey);
+            return Optional.empty();
+        }
+    }
+
+    private T handleUpstream(final String key) {
         final CompletableFuture<T> upstreamDataFuture = CompletableFuture.supplyAsync(() -> upstreamDataLoader.apply(key), upstreamExecutor);
         try {
             return upstreamDataFuture.get(upstreamDataLoadTimeout.toMillis(), TimeUnit.MILLISECONDS);
@@ -282,7 +290,7 @@ public class SCacheDefaultImpl<T> extends SCache<T> implements DisposableBean {
             log.error("Upstream data load timed out after {} ms for key: {}, cancelling task and returning null", upstreamDataLoadTimeout.toMillis(), key);
             upstreamDataFuture.cancel(true);
             return null;
-        }catch (RejectedExecutionException e) {
+        } catch (RejectedExecutionException e) {
             log.error("Upstream executor pool is full, rejecting task for key: {}", key, e);
             return null;
         } catch (InterruptedException e) {
@@ -303,14 +311,6 @@ public class SCacheDefaultImpl<T> extends SCache<T> implements DisposableBean {
             log.warn("Exception while attempting to acquire Redis lock for key: {}, treating as lock failure", cacheLockKey, e);
 
             return false;
-        }
-    }
-
-    private void invalidateAllLocalCacheSilently(final String cacheKey) {
-        try {
-            sCacheSynchronizer.invalidateAllLocalCache(cacheKey);
-        } catch (Exception e) {
-            log.error("Failed to invalidate local cache across instances for key: {}, may cause temporary inconsistency", cacheKey, e);
         }
     }
 
