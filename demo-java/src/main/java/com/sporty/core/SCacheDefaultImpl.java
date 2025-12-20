@@ -1,6 +1,9 @@
 package com.sporty.core;
 
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.sporty.exception.SCacheLocalCacheOperateException;
@@ -13,8 +16,19 @@ import org.springframework.data.redis.core.script.DefaultRedisScript;
 
 import java.io.IOException;
 import java.time.Duration;
-import java.util.*;
-import java.util.concurrent.*;
+import java.util.Collections;
+import java.util.List;
+import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executor;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.function.Function;
 
 @Log4j2
@@ -30,7 +44,10 @@ public class SCacheDefaultImpl<T> extends SCache<T> implements DisposableBean {
     private final Executor upstreamExecutor;
     private final SCacheSynchronizer sCacheSynchronizer;
 
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper = new ObjectMapper()
+            .disable(SerializationFeature.FAIL_ON_EMPTY_BEANS)
+            .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+            .registerModule(new JavaTimeModule());
 
     private static final double TIMEOUT_WARNING_THRESHOLD_RATIO = 0.8;
     private static final long LOCK_TIMEOUT_MULTIPLIER = 2L;
