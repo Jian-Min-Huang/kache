@@ -37,17 +37,16 @@ class SCacheDefaultImplTests {
         upstream = Mockito.mock(Function.class);
         sCacheSynchronizer = Mockito.mock(SCacheSynchronizer.class);
 
-        cache = new SCacheDefaultImpl<>(
-                TestData.class,
-                Duration.ofMinutes(5),
-                1024L,
-                Duration.ofMinutes(10),
-                redisTemplate,
-                Duration.ofMinutes(1),
-                upstream,
-                8,
-                sCacheSynchronizer
-        );
+        cache = SCacheDefaultImpl.builder(TestData.class)
+                .localCacheExpiry(Duration.ofMinutes(5))
+                .maximumSize(1024L)
+                .remoteCacheExpiry(Duration.ofMinutes(10))
+                .stringRedisTemplate(redisTemplate)
+                .upstreamDataLoadTimeout(Duration.ofMinutes(1))
+                .upstreamDataLoadFunction(upstream)
+                .upstreamDataLoadPoolSize(8)
+                .sCacheSynchronizer(sCacheSynchronizer)
+                .build();
     }
 
     String key = "1";

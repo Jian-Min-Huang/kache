@@ -20,15 +20,16 @@ public class AppConfig {
             final MemberRepository memberRepository,
             final RedisConnectionFactory redisConnectionFactory
     ) {
-        return new SCacheDefaultImpl<>(
-                Member.class,
-                Duration.ofMinutes(5),
-                1024L,
-                Duration.ofMinutes(10),
-                stringRedisTemplate,
-                Duration.ofMinutes(1),
-                id -> memberRepository.findById(id).orElse(null),
-                8,
-                new SCacheSynchronizerDefaultImpl(stringRedisTemplate, redisConnectionFactory));
+        return SCacheDefaultImpl
+                .builder(Member.class)
+                .localCacheExpiry(Duration.ofMinutes(5))
+                .maximumSize(1024L)
+                .remoteCacheExpiry(Duration.ofMinutes(10))
+                .stringRedisTemplate(stringRedisTemplate)
+                .upstreamDataLoadTimeout(Duration.ofMinutes(1))
+                .upstreamDataLoadFunction(id -> memberRepository.findById(id).orElse(null))
+                .upstreamDataLoadPoolSize(8)
+                .sCacheSynchronizer(new SCacheSynchronizerDefaultImpl(stringRedisTemplate, redisConnectionFactory))
+                .build();
     }
 }

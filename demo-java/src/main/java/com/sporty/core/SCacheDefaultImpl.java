@@ -39,9 +39,9 @@ public class SCacheDefaultImpl<T> extends SCache<T> implements DisposableBean {
     private final StringRedisTemplate stringRedisTemplate;
     private final Duration upstreamDataLoadTimeout;
     private final Long upstreamDataLoadTimeoutWarningThreshold;
-    private final Duration upstreamLockTimeout;
+    private final Duration upstreamDataLoadLockTimeout;
     private final Function<String, T> upstreamDataLoader;
-    private final Executor upstreamExecutor;
+    private final Executor upstreamDataLoadExecutor;
     private final SCacheSynchronizer sCacheSynchronizer;
 
     private final ObjectMapper objectMapper = new ObjectMapper()
@@ -49,8 +49,22 @@ public class SCacheDefaultImpl<T> extends SCache<T> implements DisposableBean {
             .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
             .registerModule(new JavaTimeModule());
 
+    /**
+     * Threshold ratio to log warnings if upstream data load time exceeds this percentage of the timeout.
+     * For example, with a ratio of 0.8 and a timeout of 1000ms, a warning will be logged if the load takes longer than 800ms.
+     */
     private static final double TIMEOUT_WARNING_THRESHOLD_RATIO = 0.8;
+
+    /**
+     * Multiplier to determine the lock timeout duration based on the upstream data load timeout.
+     * For example, if the upstream data load timeout is 30 seconds and the multiplier is 2 and gc network buffer is 10 seconds,
+     * the lock timeout will be set to 70 seconds (30 * 2 + 10).
+     */
     private static final long LOCK_TIMEOUT_MULTIPLIER = 2L;
+
+    /**
+     * @see #LOCK_TIMEOUT_MULTIPLIER
+     */
     private static final int GC_NETWORK_BUFFER_SECONDS = 10;
     private static final String luaScript = """
             if redis.call('get', KEYS[1]) == ARGV[1] then
@@ -72,44 +86,126 @@ public class SCacheDefaultImpl<T> extends SCache<T> implements DisposableBean {
      * 4. Although we have implemented a mechanism to cancel that load, it only works for the client side. If the upstream service itself does not implement a timeout logic, it may still lead to the <b>upstreamExecutor</b> threads being occupied for a long time, potentially exhausting the thread pool and throw RejectedExecutionException.
      * </pre>
      */
-    public SCacheDefaultImpl(
-            final Class<T> clazz,
-            final Duration localCacheExpiry,
-            final Long maximumSize,
-            final Duration remoteCacheExpiry,
-            final StringRedisTemplate stringRedisTemplate,
-            final Duration upstreamDataLoadTimeout,
-            final Function<String, T> upstreamDataLoader,
-            final Integer corePoolSize,
-            final SCacheSynchronizer sCacheSynchronizer
-    ) {
-        super(clazz.getSimpleName());
+    private SCacheDefaultImpl(Builder<T> builder) {
+        super(builder.clazz.getSimpleName());
 
-        this.clazz = clazz;
+        this.clazz = builder.clazz;
         this.caffeineCache = Caffeine
                 .newBuilder()
-                .expireAfterWrite(localCacheExpiry)
-                .maximumSize(maximumSize)
+                .expireAfterWrite(builder.localCacheExpiry)
+                .maximumSize(builder.maximumSize)
                 .recordStats()
                 .build();
-        this.remoteCacheExpiry = remoteCacheExpiry;
-        this.stringRedisTemplate = stringRedisTemplate;
-        this.upstreamDataLoadTimeout = upstreamDataLoadTimeout;
-        this.upstreamDataLoadTimeoutWarningThreshold = (long) (upstreamDataLoadTimeout.toMillis() * TIMEOUT_WARNING_THRESHOLD_RATIO);
-        this.upstreamLockTimeout = upstreamDataLoadTimeout.multipliedBy(LOCK_TIMEOUT_MULTIPLIER).plusSeconds(GC_NETWORK_BUFFER_SECONDS);
-        this.upstreamDataLoader = upstreamDataLoader;
-        this.upstreamExecutor = new ThreadPoolExecutor(
-                corePoolSize,
-                corePoolSize * 2,
+        this.remoteCacheExpiry = builder.remoteCacheExpiry;
+        this.stringRedisTemplate = builder.stringRedisTemplate;
+        this.upstreamDataLoadTimeout = builder.upstreamDataLoadTimeout;
+        this.upstreamDataLoadTimeoutWarningThreshold = (long) (builder.upstreamDataLoadTimeout.toMillis() * TIMEOUT_WARNING_THRESHOLD_RATIO);
+        this.upstreamDataLoadLockTimeout = builder.upstreamDataLoadTimeout.multipliedBy(LOCK_TIMEOUT_MULTIPLIER).plusSeconds(GC_NETWORK_BUFFER_SECONDS);
+        this.upstreamDataLoader = builder.upstreamDataLoadFunction;
+        this.upstreamDataLoadExecutor = new ThreadPoolExecutor(
+                builder.upstreamDataLoadPoolSize,
+                builder.upstreamDataLoadPoolSize * 2,
                 60L,
                 TimeUnit.SECONDS,
-                new ArrayBlockingQueue<>(corePoolSize * 4),
-                new SCacheThreadFactory(clazz.getTypeName()),
+                new ArrayBlockingQueue<>(builder.upstreamDataLoadPoolSize * 4),
+                new SCacheThreadFactory(builder.clazz.getTypeName()),
                 new ThreadPoolExecutor.AbortPolicy()
         );
-        this.sCacheSynchronizer = sCacheSynchronizer;
+        this.sCacheSynchronizer = builder.sCacheSynchronizer;
 
         sCacheSynchronizer.registerSCache(clazz.getTypeName(), this);
+    }
+
+    public static <T> Builder<T> builder(Class<T> clazz) {
+        return new Builder<>(clazz);
+    }
+
+    public static class Builder<T> {
+        private final Class<T> clazz;
+        private Duration localCacheExpiry;
+        private Long maximumSize;
+        private Duration remoteCacheExpiry;
+        private StringRedisTemplate stringRedisTemplate;
+        private Duration upstreamDataLoadTimeout;
+        private Function<String, T> upstreamDataLoadFunction;
+        private Integer upstreamDataLoadPoolSize;
+        private SCacheSynchronizer sCacheSynchronizer;
+
+        private Builder(Class<T> clazz) {
+            this.clazz = clazz;
+        }
+
+        public Builder<T> localCacheExpiry(Duration localCacheExpiry) {
+            this.localCacheExpiry = localCacheExpiry;
+            return this;
+        }
+
+        public Builder<T> maximumSize(Long maximumSize) {
+            this.maximumSize = maximumSize;
+            return this;
+        }
+
+        public Builder<T> remoteCacheExpiry(Duration remoteCacheExpiry) {
+            this.remoteCacheExpiry = remoteCacheExpiry;
+            return this;
+        }
+
+        public Builder<T> stringRedisTemplate(StringRedisTemplate stringRedisTemplate) {
+            this.stringRedisTemplate = stringRedisTemplate;
+            return this;
+        }
+
+        public Builder<T> upstreamDataLoadTimeout(Duration upstreamDataLoadTimeout) {
+            this.upstreamDataLoadTimeout = upstreamDataLoadTimeout;
+            return this;
+        }
+
+        public Builder<T> upstreamDataLoadFunction(Function<String, T> upstreamDataLoadFunction) {
+            this.upstreamDataLoadFunction = upstreamDataLoadFunction;
+            return this;
+        }
+
+        public Builder<T> upstreamDataLoadPoolSize(Integer upstreamDataLoadPoolSize) {
+            this.upstreamDataLoadPoolSize = upstreamDataLoadPoolSize;
+            return this;
+        }
+
+        public Builder<T> sCacheSynchronizer(SCacheSynchronizer sCacheSynchronizer) {
+            this.sCacheSynchronizer = sCacheSynchronizer;
+            return this;
+        }
+
+        public SCacheDefaultImpl<T> build() {
+            if (clazz == null) {
+                throw new IllegalArgumentException("clazz is required");
+            }
+            if (localCacheExpiry == null) {
+                throw new IllegalArgumentException("localCacheExpiry is required");
+            }
+            if (maximumSize == null) {
+                throw new IllegalArgumentException("maximumSize is required");
+            }
+            if (remoteCacheExpiry == null) {
+                throw new IllegalArgumentException("remoteCacheExpiry is required");
+            }
+            if (stringRedisTemplate == null) {
+                throw new IllegalArgumentException("stringRedisTemplate is required");
+            }
+            if (upstreamDataLoadTimeout == null) {
+                throw new IllegalArgumentException("upstreamDataLoadTimeout is required");
+            }
+            if (upstreamDataLoadFunction == null) {
+                throw new IllegalArgumentException("upstreamDataLoadFunction is required");
+            }
+            if (upstreamDataLoadPoolSize == null) {
+                throw new IllegalArgumentException("upstreamDataLoadPoolSize is required");
+            }
+            if (sCacheSynchronizer == null) {
+                throw new IllegalArgumentException("sCacheSynchronizer is required");
+            }
+
+            return new SCacheDefaultImpl<>(this);
+        }
     }
 
     @Override
@@ -168,7 +264,7 @@ public class SCacheDefaultImpl<T> extends SCache<T> implements DisposableBean {
     public void destroy() {
         log.info("Shutting down upstream executor for cache: {}", clazz.getTypeName());
 
-        if (upstreamExecutor instanceof ThreadPoolExecutor tpe) {
+        if (upstreamDataLoadExecutor instanceof ThreadPoolExecutor tpe) {
             tpe.shutdown();
             try {
                 if (!tpe.awaitTermination(THREAD_POOL_EXECUTOR_AWAIT_TERMINATION_SECONDS, TimeUnit.SECONDS)) {
@@ -287,7 +383,7 @@ public class SCacheDefaultImpl<T> extends SCache<T> implements DisposableBean {
     }
 
     private T handleUpstream(final String key) {
-        final CompletableFuture<T> upstreamDataFuture = CompletableFuture.supplyAsync(() -> upstreamDataLoader.apply(key), upstreamExecutor);
+        final CompletableFuture<T> upstreamDataFuture = CompletableFuture.supplyAsync(() -> upstreamDataLoader.apply(key), upstreamDataLoadExecutor);
         try {
             return upstreamDataFuture.get(upstreamDataLoadTimeout.toMillis(), TimeUnit.MILLISECONDS);
         } catch (TimeoutException e) {
@@ -310,7 +406,7 @@ public class SCacheDefaultImpl<T> extends SCache<T> implements DisposableBean {
 
     private boolean tryLock(final String cacheLockKey, final String cacheLockValue) {
         try {
-            return Boolean.TRUE.equals(stringRedisTemplate.opsForValue().setIfAbsent(cacheLockKey, cacheLockValue, upstreamLockTimeout));
+            return Boolean.TRUE.equals(stringRedisTemplate.opsForValue().setIfAbsent(cacheLockKey, cacheLockValue, upstreamDataLoadLockTimeout));
         } catch (Exception e) {
             log.warn("Exception while attempting to acquire Redis lock for key: {}, treating as lock failure", cacheLockKey, e);
 
@@ -330,7 +426,7 @@ public class SCacheDefaultImpl<T> extends SCache<T> implements DisposableBean {
                 log.error("CRITICAL: Lock expired or ownership lost before release for key: {} - upstream load may have exceeded timeout", cacheLockKey);
             }
         } catch (Exception e) {
-            log.error("Failed to delete Redis lock for key: {}, lock will auto-expire in {} seconds", cacheLockKey, upstreamLockTimeout.getSeconds(), e);
+            log.error("Failed to delete Redis lock for key: {}, lock will auto-expire in {} seconds", cacheLockKey, upstreamDataLoadLockTimeout.getSeconds(), e);
         }
     }
 }
