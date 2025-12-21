@@ -81,9 +81,6 @@ public class SCacheDefaultImpl<T> extends SCache<T> implements DisposableBean {
             final Duration upstreamDataLoadTimeout,
             final Function<String, T> upstreamDataLoader,
             final Integer corePoolSize,
-            final Integer maximumPoolSize,
-            final Long keepAliveTime,
-            final Integer workerQueueCapacity,
             final SCacheSynchronizer sCacheSynchronizer
     ) {
         super(clazz.getSimpleName());
@@ -103,10 +100,10 @@ public class SCacheDefaultImpl<T> extends SCache<T> implements DisposableBean {
         this.upstreamDataLoader = upstreamDataLoader;
         this.upstreamExecutor = new ThreadPoolExecutor(
                 corePoolSize,
-                maximumPoolSize,
-                keepAliveTime,
+                corePoolSize * 2,
+                60L,
                 TimeUnit.SECONDS,
-                new ArrayBlockingQueue<>(workerQueueCapacity),
+                new ArrayBlockingQueue<>(corePoolSize * 4),
                 new SCacheThreadFactory(clazz.getTypeName()),
                 new ThreadPoolExecutor.AbortPolicy()
         );

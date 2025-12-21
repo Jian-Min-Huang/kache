@@ -29,9 +29,6 @@ public class AppConfig {
                 Duration.ofMinutes(1),
                 id -> memberRepository.findById(id).orElse(null),
                 8,
-                16,
-                60L,
-                16,
                 new SCacheSynchronizerDefaultImpl(stringRedisTemplate, redisConnectionFactory));
     }
 }
