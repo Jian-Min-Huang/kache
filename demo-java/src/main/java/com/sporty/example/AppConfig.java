@@ -27,7 +27,7 @@ public class AppConfig {
                 .remoteCacheExpiry(Duration.ofMinutes(10))
                 .stringRedisTemplate(stringRedisTemplate)
                 .upstreamDataLoadTimeout(Duration.ofMinutes(1))
-                .upstreamDataLoadFunction(id -> memberRepository.findById(id).orElse(null))
+                .upstreamDataLoadFunction(id -> memberRepository.findById(Long.parseLong(id)).orElse(null))
                 .upstreamDataLoadPoolSize(8)
                 .sCacheSynchronizer(new SCacheSynchronizerDefaultImpl(stringRedisTemplate, redisConnectionFactory))
                 .build();

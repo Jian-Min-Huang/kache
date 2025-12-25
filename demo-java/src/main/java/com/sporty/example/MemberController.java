@@ -1,11 +1,12 @@
 package com.sporty.example;
 
 import com.sporty.core.SCache;
+import com.sporty.exception.SCacheBlankKeyException;
 import com.sporty.exception.SCacheLocalCacheOperateException;
 import com.sporty.exception.SCacheRemoteCacheOperateException;
 import com.sporty.exception.SCacheSerializeException;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.log4j.Log4j2;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -16,7 +17,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-@Log4j2
+@Slf4j
 @RestController
 @RequestMapping("/api/members")
 @RequiredArgsConstructor
@@ -24,12 +25,17 @@ public class MemberController {
     private final SCache<Member> memberCache;
     private final MemberRepository memberRepository;
 
-    @PostMapping("/{id}")
-    public ResponseEntity<Void> upsert(@PathVariable final String id, @RequestBody final Member memberData) {
-        memberRepository.save(id, memberData);
+    @PostMapping
+    public ResponseEntity<Void> upsert(@RequestBody final Member memberData) {
+        final Member save = memberRepository.save(memberData);
         try {
-            memberCache.put(id, memberData);
-        } catch (SCacheSerializeException | SCacheRemoteCacheOperateException | SCacheLocalCacheOperateException e) {
+            memberCache.put(save.getId().toString(), memberData);
+        } catch (SCacheBlankKeyException | SCacheSerializeException | SCacheRemoteCacheOperateException |
+                 SCacheLocalCacheOperateException e) {
+            if (e instanceof SCacheBlankKeyException) {
+                // TODO:
+                log.error(e.getMessage(), e);
+            }
             if (e instanceof SCacheSerializeException) {
                 // TODO:
                 log.error(e.getMessage(), e);
@@ -57,7 +63,7 @@ public class MemberController {
 
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> removeById(@PathVariable final String id) {
-        memberRepository.delete(id);
+        memberRepository.delete(Long.parseLong(id));
         try {
             memberCache.invalidateAllCache(id);
         } catch (SCacheRemoteCacheOperateException | SCacheLocalCacheOperateException e) {

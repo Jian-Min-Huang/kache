@@ -6,27 +6,30 @@ import java.time.Instant;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 
 @Repository
 public class MemberRepository {
-    final Map<String, Member> records = new ConcurrentHashMap<>();
+    final Map<Long, Member> records = new ConcurrentHashMap<>();
+    final AtomicLong id = new AtomicLong(1);
 
     public MemberRepository() {
-        records.put("1", new Member(1L, "Vincent", 18, Instant.now(), Instant.now()));
-        records.put("2", new Member(2L, "Alice", 25, Instant.now(), Instant.now()));
-        records.put("3", new Member(3L, "Bob", 30, Instant.now(), Instant.now()));
-        records.put("4", new Member(4L, "Charlie", 22, Instant.now(), Instant.now()));
-        records.put("5", new Member(5L, "Diana", 28, Instant.now(), Instant.now()));
-        records.put("6", new Member(6L, "Emma", 27, Instant.now(), Instant.now()));
-        records.put("7", new Member(7L, "Frank", 35, Instant.now(), Instant.now()));
-        records.put("8", new Member(8L, "Grace", 24, Instant.now(), Instant.now()));
-        records.put("9", new Member(9L, "Henry", 29, Instant.now(), Instant.now()));
-        records.put("10", new Member(10L, "Ivy", 26, Instant.now(), Instant.now()));
+        records.put(1L, new Member(id.getAndAdd(1L), "Vincent", 18, Instant.now(), Instant.now()));
+        records.put(2L, new Member(id.getAndAdd(1L), "Alice", 25, Instant.now(), Instant.now()));
+        records.put(3L, new Member(id.getAndAdd(1L), "Bob", 30, Instant.now(), Instant.now()));
+        records.put(4L, new Member(id.getAndAdd(1L), "Charlie", 22, Instant.now(), Instant.now()));
+        records.put(5L, new Member(id.getAndAdd(1L), "Diana", 28, Instant.now(), Instant.now()));
+        records.put(6L, new Member(id.getAndAdd(1L), "Emma", 27, Instant.now(), Instant.now()));
+        records.put(7L, new Member(id.getAndAdd(1L), "Frank", 35, Instant.now(), Instant.now()));
+        records.put(8L, new Member(id.getAndAdd(1L), "Grace", 24, Instant.now(), Instant.now()));
+        records.put(9L, new Member(id.getAndAdd(1L), "Henry", 29, Instant.now(), Instant.now()));
+        records.put(10L, new Member(id.getAndAdd(1L), "Ivy", 26, Instant.now(), Instant.now()));
     }
 
-    public Member save(final String id, final Member data) {
+    public Member save(final Member data) {
         return Optional
-                .ofNullable(records.get(id))
+                .ofNullable(data.getId() == null ? null : records.get(data.getId()))
+                // update
                 .map(v -> {
                     if (data.getName() != null) {
                         v.setName(data.getName());
@@ -38,19 +41,21 @@ public class MemberRepository {
 
                     return v;
                 })
+                // insert
                 .orElseGet(() -> {
+                    data.setId(id.getAndAdd(1L));
                     data.setCreateTime(Instant.now());
                     data.setUpdateTime(Instant.now());
-                    records.put(id, data);
+                    records.put(data.getId(), data);
                     return data;
                 });
     }
 
-    public Optional<Member> findById(final String id) {
+    public Optional<Member> findById(final Long id) {
         return Optional.ofNullable(records.get(id));
     }
 
-    public void delete(final String id) {
+    public void delete(final Long id) {
         records.remove(id);
     }
 }

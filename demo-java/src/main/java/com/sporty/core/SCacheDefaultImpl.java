@@ -9,7 +9,7 @@ import com.github.benmanes.caffeine.cache.Caffeine;
 import com.sporty.exception.SCacheLocalCacheOperateException;
 import com.sporty.exception.SCacheRemoteCacheOperateException;
 import com.sporty.exception.SCacheSerializeException;
-import lombok.extern.log4j.Log4j2;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.DisposableBean;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
@@ -31,7 +31,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Function;
 
-@Log4j2
+@Slf4j
 public class SCacheDefaultImpl<T> extends SCache<T> implements DisposableBean {
     private final Class<T> clazz;
     private final Cache<String, T> caffeineCache;
